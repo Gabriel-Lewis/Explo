@@ -12,6 +12,7 @@ import (
 type Monitor interface {
 	GetDownloadStatus([]*models.Track) (map[string]FileStatus, error)
 	GetConf() (MonitorConfig, error)
+	MoveDownload(string, string, string, *models.Track) error
 	Cleanup(models.Track, string) error
 }
 
@@ -32,6 +33,7 @@ type FileStatus struct {
 	BytesTransferred int       `json:"bytesTransferred"`
 	BytesRemaining   int       `json:"bytesRemaining"`
 	PercentComplete  float64   `json:"percentComplete"`
+	QueueID 		 string    `json:"queueID"`
 }
 
 func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) error {
@@ -51,6 +53,7 @@ func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) err
 		if err != nil {
 			return fmt.Errorf("[%s/monitor] error fetching download status: %s", monCfg.Service, err.Error())
 		}
+		slog.Debug("fetched download queue", "size", len(statuses))
 
 		currentTime := time.Now().Local()
 
@@ -70,7 +73,7 @@ func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) err
 					LastUpdated:          currentTime,
 				}
 			}
-			fileStatus, exists := statuses[track.File]
+			fileStatus, exists := statuses[track.ID]
 			tracker := progressMap[key]
 			if !exists {
 				tracker.Counter++
@@ -83,13 +86,14 @@ func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) err
 			}
 			monitoredTime := currentTime.Sub(tracker.LastUpdated)
 
-			if fileStatus.BytesRemaining == 0 || fileStatus.PercentComplete == 100 || strings.Contains(fileStatus.State, "Succeeded") {		
+			if (fileStatus.BytesRemaining == 0 && fileStatus.BytesTransferred != 0) || fileStatus.PercentComplete == 100 || strings.Contains(fileStatus.State, "Succeeded") {		
+				track.File = fileStatus.Filename
 				track.Present = true
 				slog.Info("[monitor] file downloaded successfully", "service", monCfg.Service, "file", track.File)
-				var path string
-				track.File, path = parsePath(track.File)
+				var filePath string
+				track.File, filePath = parsePath(track.File)
 				if monCfg.MigrateDownload {
-					if err = c.MoveDownload(monCfg.FromDir, monCfg.ToDir, path, track); err != nil {
+					if err = m.MoveDownload(monCfg.FromDir, monCfg.ToDir, filePath, track); err != nil {
 						slog.Error("error while moving file", "err", err.Error())
 					} else {
 						slog.Info("track moved successfully", "service", monCfg.Service)
@@ -97,7 +101,7 @@ func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) err
 				}
 				delete(progressMap, key)
 				successDownloads += 1
-				if err = m.Cleanup(*track, fileStatus.ID); err != nil {
+				if err = m.Cleanup(*track, fileStatus.QueueID); err != nil {
 					slog.Debug("cleanup failed", logging.RuntimeAttr(err.Error()))
 				}
 				continue
@@ -111,7 +115,7 @@ func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) err
 			} else if monitoredTime > monCfg.MonitorDuration || fileStatus.State == "Errored" {
 				slog.Info("[monitor] no download progress for file, skipping", "service", monCfg.Service, "file", track.File, "state", fileStatus.State, "duration", monitoredTime,)
 				tracker.Skipped = true
-				if err = m.Cleanup(*track, fileStatus.ID); err != nil {
+				if err = m.Cleanup(*track, fileStatus.QueueID); err != nil {
 					slog.Debug("cleanup failed", logging.RuntimeAttr(err.Error()))
 				}
 				continue
