@@ -19,6 +19,11 @@ type Monitor interface {
 type MonitorConfig struct {
 	CheckInterval   time.Duration
 	MonitorDuration time.Duration
+	// FallbackAfter bounds the whole monitor phase for one provider. Once it
+	// elapses, any track still unresolved is abandoned so the next provider in
+	// DOWNLOAD_SERVICES can attempt it. Zero means wait indefinitely, which is
+	// the historical behaviour.
+	FallbackAfter   time.Duration
 	MigrateDownload bool
 	FromDir         string
 	ToDir           string
@@ -47,6 +52,8 @@ func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) err
 
 	ticker := time.NewTicker(monCfg.CheckInterval)
 	defer ticker.Stop()
+
+	phaseStart := time.Now()
 
 	for range ticker.C {
 		statuses, err := m.GetDownloadStatus(tracks)
@@ -126,8 +133,40 @@ func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) err
 			slog.Info("[monitor] Finished", "service", monCfg.Service, "downloaded files", successDownloads, "total tracks", len(tracks))
 			return nil
 		}
+
+		// Budget for this provider exhausted: abandon whatever is still in
+		// flight so the next service in DOWNLOAD_SERVICES gets a turn.
+		if monCfg.FallbackAfter > 0 && time.Since(phaseStart) > monCfg.FallbackAfter {
+			abandoned := abandonUnresolved(tracks, statuses, m)
+			slog.Info("[monitor] fallback threshold reached, moving on to the next download service",
+				"service", monCfg.Service, "threshold", monCfg.FallbackAfter,
+				"downloaded files", successDownloads, "unresolved tracks", abandoned)
+			return nil
+		}
 	}
 	return nil
+}
+
+// abandonUnresolved cancels any still-running download for tracks this provider
+// did not finish, so it does not keep downloading in the background after we
+// have moved on. Returns how many tracks were left unresolved.
+func abandonUnresolved(tracks []*models.Track, statuses map[string]FileStatus, m Monitor) int {
+	var unresolved int
+	for _, track := range tracks {
+		if track.Present {
+			continue
+		}
+		unresolved++
+
+		fileStatus, exists := statuses[track.ID]
+		if !exists {
+			continue
+		}
+		if err := m.Cleanup(*track, fileStatus.QueueID); err != nil {
+			slog.Debug("cleanup failed", logging.RuntimeAttr(err.Error()))
+		}
+	}
+	return unresolved
 }
 
 // Checks if all tracks are processed (either downloaded or skipped)
