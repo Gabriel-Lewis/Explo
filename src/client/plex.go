@@ -244,7 +244,15 @@ func (c *Plex) AddHeader() error {
 		c.Cfg.Creds.Headers = make(map[string]string)
 		c.Cfg.Creds.Headers["X-Plex-Client-Identifier"] = c.Cfg.ClientID
 
-		return nil
+		// Only bail out here when there is no key to install yet. The plex
+		// setup path calls AddHeader() again after GetAuth() fills in the
+		// token, but the admin client built in GetLibrary() gets a fresh
+		// Credentials{APIKey: ...} with a nil Headers map and is only called
+		// once -- returning early there left it with no X-Plex-Token, so
+		// every admin request 401'd.
+		if c.Cfg.Creds.APIKey == "" {
+			return nil
+		}
 	}
 	if c.Cfg.Creds.APIKey != "" {
 		c.Cfg.Creds.Headers["X-Plex-Token"] = c.Cfg.Creds.APIKey
