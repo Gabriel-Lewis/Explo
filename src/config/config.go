@@ -140,6 +140,10 @@ type Slskd struct {
 	DownloadAttempts int    `env:"SLSKD_DL_ATTEMPTS" env-default:"3"` // Max number of files to attempt downloading per track
 	SlskdDir         string `env:"SLSKD_DIR" env-default:"/slskd/"`
 	MigrateDL        bool   `env:"MIGRATE_DOWNLOADS" env-default:"false"` // Move downloads from SlskdDir to DownloadDir
+	// Download every track in the release the matched file sits in, rather
+	// than the single recommended track. Off by default: it multiplies how
+	// much is transferred per recommendation.
+	AlbumMode        bool   `env:"SLSKD_ALBUM_MODE" env-default:"false"`
 	Timeout          int    `env:"SLSKD_TIMEOUT" env-default:"20"`
 	Filters          Filters
 	MonitorConfig    SlskdMon

@@ -33,6 +33,26 @@ type Downloader interface {
 	Monitor
 }
 
+// albumMigrator is implemented by downloaders that fetch a whole release and
+// so have files to migrate beyond the one the monitor tracks. It is optional:
+// a downloader that only ever grabs a single file simply does not implement it.
+type albumMigrator interface {
+	MoveAlbumSiblings(trackDir, destDir string, track *models.Track, keepPermissions bool)
+}
+
+// albumMigrators returns the registered downloaders that migrate whole
+// releases. Implementations are responsible for deciding whether they have
+// anything to move for a given track.
+func (c *DownloadClient) albumMigrators() []albumMigrator {
+	var migrators []albumMigrator
+	for _, d := range c.Downloaders {
+		if m, ok := d.(albumMigrator); ok {
+			migrators = append(migrators, m)
+		}
+	}
+	return migrators
+}
+
 // get download services from config and append them to DownloadClient
 func NewDownloader(cfg *cfg.DownloadConfig, httpClient *util.HttpClient, filterLocal bool) (*DownloadClient, error) {
 	var downloader []Downloader
@@ -324,6 +344,12 @@ func (c *DownloadClient) MoveDownload(srcDir, destDir, trackPath string, track *
 
 	if err = os.Remove(srcFile); err != nil {
 		return fmt.Errorf("failed to delete original file: %s", err.Error())
+	}
+
+	// Siblings move before the emptiness check below, so a directory still
+	// holding an unfinished album track is not removed out from under it.
+	for _, m := range c.albumMigrators() {
+		m.MoveAlbumSiblings(trackDir, filepath.Dir(dstFile), track, c.Cfg.KeepPermissions)
 	}
 
 	isEmpty, err := isDirEmpty(trackDir)
