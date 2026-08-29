@@ -136,6 +136,9 @@ func (c *Slskd) QueryTrack(track *models.Track) error {
 
 	wildcardSearch := false
 	trackDetails := fmt.Sprintf("%s - %s", track.CleanTitle, track.Artist)
+	if c.Cfg.AlbumMode {
+		trackDetails = albumSearchTerm(*track)
+	}
 
 	retry:
 		ID, err := c.searchTrack(trackDetails)
@@ -154,7 +157,11 @@ func (c *Slskd) QueryTrack(track *models.Track) error {
 		if errors.Is(err, errNoRes) && !wildcardSearch {
 			cleanup()
 			wildcardSearch = true
-			trackDetails = fmt.Sprintf("%s - %s", track.CleanTitle, wildcardArtist(track.Artist))
+			if c.Cfg.AlbumMode && strings.TrimSpace(track.Album) != "" {
+				trackDetails = fmt.Sprintf("%s - %s", wildcardArtist(track.MainArtist), track.Album)
+			} else {
+				trackDetails = fmt.Sprintf("%s - %s", track.CleanTitle, wildcardArtist(track.Artist))
+			}
 			slog.Debug("no result found with artist full name, trying with wildcard", "query", trackDetails)
 			goto retry
 		}
@@ -178,6 +185,13 @@ func (c *Slskd) GetTrack(track *models.Track) error {
 	results, err := c.searchResults(track.ID)
 	if err != nil {
 		return err
+	}
+	if c.Cfg.AlbumMode {
+		files, err := c.CollectAlbumFiles(*track, results)
+		if err != nil {
+			return err
+		}
+		return c.queueAlbumDownload(files, track)
 	}
 	files, err := c.CollectFiles(*track, results)
 	if err != nil {
