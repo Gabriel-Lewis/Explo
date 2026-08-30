@@ -126,6 +126,13 @@ func scoreDir(dir peerDir, track models.Track) int {
 	return score
 }
 
+// scoreDirWithPreference adds the size preference to a release's score. Kept
+// separate so the matching terms above stay readable, and weighted well below
+// them: quality decides between equally good matches and never overrides one.
+func (c Slskd) scoreDirWithPreference(dir peerDir, track models.Track) int {
+	return scoreDir(dir, track) + scorePreference(dir.files, normalisePreference(c.Cfg.SizePreference))
+}
+
 // qualityFiltered drops files failing the bitrate and bit-depth floors. Unlike
 // filterFiles it does not cap the count -- the whole release is the point --
 // and it leaves the primary in place even if it fails, since a playlist entry
@@ -173,7 +180,7 @@ func (c Slskd) CollectAlbumFiles(track models.Track, results SearchResults) ([]F
 		if !findPrimary(dir, track) {
 			continue
 		}
-		if score := scoreDir(*dir, track); best == nil || score > bestScore {
+		if score := c.scoreDirWithPreference(*dir, track); best == nil || score > bestScore {
 			best, bestScore = dir, score
 		}
 	}
