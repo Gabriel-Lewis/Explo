@@ -425,10 +425,11 @@ func (c *Slskd) GetDownloadStatus(tracks []*models.Track) (map[string]FileStatus
 			}
 		}
 	}
-	if len(fileStatuses) != 0 {
-		return fileStatuses, nil
-	}
-	return nil, fmt.Errorf("no files found to monitor")
+	// An empty result is not a failure. slskd may not have surfaced the
+	// transfers yet, and reporting that as an error used to abort monitoring
+	// for every track at once. The monitor decides on its own how long to wait
+	// for a file to appear.
+	return fileStatuses, nil
 }
 
 func (c Slskd) deleteDownload(user, ID string) error {
