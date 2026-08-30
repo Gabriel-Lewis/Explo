@@ -39,11 +39,19 @@ type Server struct {
 }
 
 func NewServer(cfg config.ServerConfig) *Server {
+	// Cookies are not scoped by port, so several instances on one host would
+	// share -- and overwrite -- a fixed cookie name. Default to a name derived
+	// from the listen address; UI_COOKIE_NAME overrides it.
+	cookieName := cfg.CookieName
+	if cookieName == "" {
+		cookieName = auth.DefaultCookieName(cfg.Port)
+	}
+
 	sessionManager := auth.NewSessionManager(
 		auth.NewInMemorySessionStore(),
 		1*time.Hour,
 		7*(24*time.Hour),
-		"session",
+		cookieName,
 	)
 
 	authStore := auth.NewAuthStore(

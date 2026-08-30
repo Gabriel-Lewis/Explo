@@ -25,6 +25,10 @@ services:
       # Web UI credentials (required for login)
       - UI_USERNAME=
       - UI_PASSWORD=
+      # Session cookie name. Defaults to explo_session_<port> from WEB_ADDR, so
+      # that instances on one host do not overwrite each other's login. Only set
+      # this if several instances share a host AND port behind a reverse proxy.
+      #- UI_COOKIE_NAME=
 
       # [Legacy] Schedules are managed through the web UI.
       # These can still be set here for backwards compatibility — they will take precedence over the UI.

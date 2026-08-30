@@ -48,6 +48,10 @@ type ServerConfig struct {
 	Port        string `env:"WEB_ADDR" env-default:":7288"`
 	Username    string `env:"UI_USERNAME"`
 	Password    string `env:"UI_PASSWORD"`
+	// Name of the session cookie. Empty means derive it from Port, so that
+	// instances on one host do not overwrite each other's session. Set it
+	// explicitly when several instances share a host and port behind a proxy.
+	CookieName  string `env:"UI_COOKIE_NAME"`
 	WebDataDir  string `env:"WEB_DATA_PATH" env-default:"/opt/explo/config/"`
 	WebEnvPath  string `env:"WEB_ENV_PATH" env-default:"/opt/explo/.env"`
 	CacheSizeMB int64  `env:"WEB_CACHE_MB" env-default:"500"`
