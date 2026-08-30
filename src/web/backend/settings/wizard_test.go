@@ -81,3 +81,60 @@ func TestAlbumModeIsReadableByTheUI(t *testing.T) {
 		t.Error("SLSKD_ALBUM_MODE missing from AllConfigKeys; the wizard toggle would always read back as off")
 	}
 }
+
+// The bitrate range is only useful if the wizard writes what the downloader
+// reads.
+func TestWizardStep3_PersistsTheBitrateRange(t *testing.T) {
+	s, envPath := newSettings(t)
+
+	rec := postStep3(t, s, map[string]any{
+		"download_services": []string{"slskd"},
+		"extensions":        "flac,mp3",
+		"min_bitrate":       192,
+		"max_bitrate":       320,
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("step3 = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+
+	written, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("reading written env: %v", err)
+	}
+	for _, want := range []string{"MIN_BITRATE=192", "MAX_BITRATE=320"} {
+		if !bytes.Contains(written, []byte(want)) {
+			t.Errorf("written env does not contain %q:\n%s", want, written)
+		}
+	}
+}
+
+// A zero ceiling is a real setting -- it means "no limit" -- so it has to be
+// written rather than treated as absent.
+func TestWizardStep3_WritesAZeroCeiling(t *testing.T) {
+	s, envPath := newSettings(t)
+
+	postStep3(t, s, map[string]any{
+		"download_services": []string{"slskd"},
+		"min_bitrate":       256,
+		"max_bitrate":       0,
+	})
+
+	written, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("reading written env: %v", err)
+	}
+	if !bytes.Contains(written, []byte("MAX_BITRATE=0")) {
+		t.Errorf("a zero ceiling was not written:\n%s", written)
+	}
+}
+
+// AllConfigKeys is what /api/config returns. A key missing from it is written
+// and then never read back, so the control silently resets to its default on
+// every reload with nothing to explain why.
+func TestBitrateRangeIsReadableByTheUI(t *testing.T) {
+	for _, key := range []string{"MIN_BITRATE", "MAX_BITRATE"} {
+		if !slices.Contains(defs.AllConfigKeys, key) {
+			t.Errorf("%s missing from AllConfigKeys; the control would always read back as its default", key)
+		}
+	}
+}

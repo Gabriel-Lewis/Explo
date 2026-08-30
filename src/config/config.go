@@ -116,6 +116,10 @@ type Filters struct {
 	Extensions  []string `env:"EXTENSIONS" env-default:"flac,mp3"` // slskd
 	MinBitDepth int      `env:"MIN_BIT_DEPTH" env-default:"8"`
 	MinBitRate  int      `env:"MIN_BITRATE" env-default:"256"`
+	// Ceiling in kbps. Zero disables it, so nothing changes on upgrade until
+	// someone sets one. Compared against a bitrate derived from file size when
+	// the peer reports none.
+	MaxBitRate  int      `env:"MAX_BITRATE" env-default:"0"`
 	FilterList  []string `env:"FILTER_LIST" env-default:"live,remix,instrumental,extended,clean,acapella"`
 }
 

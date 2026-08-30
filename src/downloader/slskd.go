@@ -337,11 +337,7 @@ func (c Slskd) filterFiles(files []File) ([]File, error) {
 				continue
 			}
 
-			if file.BitRate > 0 && file.BitRate < c.Cfg.Filters.MinBitRate {
-				continue
-			}
-
-			if file.BitDepth > 0 && file.BitDepth < c.Cfg.Filters.MinBitDepth {
+			if !c.withinQualityRange(file) {
 				continue
 			}
 

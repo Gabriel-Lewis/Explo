@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -440,6 +441,8 @@ func (s *Settings) HandleWizardStep3(w http.ResponseWriter, r *http.Request) {
 		SlskdAPIKey      string   `json:"slskd_api_key"`
 		SlskdAlbumMode   bool     `json:"slskd_album_mode"`
 		Extensions       string   `json:"extensions"` // slskd
+		MinBitRate       int      `json:"min_bitrate"`
+		MaxBitRate       int      `json:"max_bitrate"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -475,6 +478,8 @@ func (s *Settings) HandleWizardStep3(w http.ResponseWriter, r *http.Request) {
 		"SLSKD_API_KEY":     body.SlskdAPIKey,
 		"SLSKD_ALBUM_MODE":  albumMode,
 		"EXTENSIONS":        body.Extensions, // slskd
+		"MIN_BITRATE":       strconv.Itoa(body.MinBitRate),
+		"MAX_BITRATE":       strconv.Itoa(body.MaxBitRate),
 		"WIZARD_COMPLETE":   "true",
 	}
 
