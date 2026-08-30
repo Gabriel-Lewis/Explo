@@ -241,6 +241,15 @@ export async function saveReplacePlaylist(id, name, replace) {
   if (!res.ok) throw new Error(await res.text())
 }
 
+export async function saveLocalOnly(id, name, localOnly) {
+  const res = await apiFetch('/api/ui/config/local-only', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, name, local_only: localOnly }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+}
+
 export async function saveCleanDownloads(enabled) {
   const res = await apiFetch('/api/ui/config/clean-downloads', {
     method: 'POST',

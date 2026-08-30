@@ -374,6 +374,8 @@ export function PlaylistCard({
   onDelete,
   replacePlaylist = true,
   onReplaceToggle,
+  localOnly = false,
+  onLocalOnlyToggle,
   trackId,
   artworkUrl,
   sourceUrl,
@@ -447,9 +449,10 @@ export function PlaylistCard({
   const [copyLabel, setCopyLabel] = useState('Copy URL')
   const [cardHovered, setCardHovered] = useState(false)
   const [replaceInfoOpen, setReplaceInfoOpen] = useState(false)
+  const [localOnlyInfoOpen, setLocalOnlyInfoOpen] = useState(false)
   const menuBtnRef = useRef(null)
   const canEdit = !fixedSchedule && !!onToggleEdit
-  const hasMenu = canEdit || !!onDelete || !!sourceUrl || !!onReplaceToggle
+  const hasMenu = canEdit || !!onDelete || !!sourceUrl || !!onReplaceToggle || !!onLocalOnlyToggle
 
   useEffect(() => {
     if (!menuOpen) { setConfirmDelete(false); setDeleteTracksChecked(false); return }
@@ -703,6 +706,40 @@ export function PlaylistCard({
               {replaceInfoOpen && (
                 <span style={{ fontSize: 11, color: '#666', padding: '4px 14px 10px', lineHeight: 1.4 }}>
                   When on, creates a new dated playlist each run instead of overwriting.
+                </span>
+              )}
+            </div>
+          )}
+          {onLocalOnlyToggle && (
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <button
+                onClick={e => { e.stopPropagation(); onLocalOnlyToggle() }}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  width: '100%', textAlign: 'left',
+                  background: 'none', border: 'none',
+                  padding: '8px 14px', fontSize: 13, color: '#c0c0c0',
+                  cursor: 'pointer', gap: 10,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#1a1a1a' }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
+              >
+                <span>
+                  Use local files only<span
+                    role="button"
+                    onClick={e => { e.stopPropagation(); setLocalOnlyInfoOpen(o => !o) }}
+                    onMouseEnter={e => { e.stopPropagation(); setLocalOnlyInfoOpen(true) }}
+                    onMouseLeave={e => { e.stopPropagation(); setLocalOnlyInfoOpen(false) }}
+                    style={{ fontSize: 11, color: localOnlyInfoOpen ? '#999' : '#555', cursor: 'pointer', userSelect: 'none', verticalAlign: 'super', marginLeft: 4 }}
+                  >ⓘ</span>
+                </span>
+                <Toggle checked={localOnly} onChange={() => {}} tiny />
+              </button>
+              {localOnlyInfoOpen && (
+                <span style={{ fontSize: 11, color: '#666', padding: '4px 14px 10px', lineHeight: 1.4 }}>
+                  Builds this playlist from tracks already in your library instead of
+                  downloading, so it may come out shorter. Applies to scheduled runs;
+                  the Run button follows its own download mode.
                 </span>
               )}
             </div>
