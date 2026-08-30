@@ -55,6 +55,10 @@ type ServerConfig struct {
 	WebDataDir  string `env:"WEB_DATA_PATH" env-default:"/opt/explo/config/"`
 	WebEnvPath  string `env:"WEB_ENV_PATH" env-default:"/opt/explo/.env"`
 	CacheSizeMB int64  `env:"WEB_CACHE_MB" env-default:"500"`
+	// Kill a run started from the web UI after this many minutes. Without it a
+	// wedged run holds the "already running" guard until someone stops it by
+	// hand. 0 disables the timeout.
+	RunTimeout  int    `env:"RUN_TIMEOUT" env-default:"240"`
 	ExploPath   string
 }
 

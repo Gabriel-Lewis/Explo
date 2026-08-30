@@ -1,6 +1,7 @@
 package run
 
 import (
+	"time"
 	"fmt"
 	"errors"
 	"log/slog"
@@ -53,7 +54,10 @@ func newManualRunState() manualRunState {
 }
 
 func (mr *ManualRun) startRun(args []string) error {
-	ctx, cancel := context.WithCancel(context.Background())
+	// A run that wedges holds the "already running" guard below, so every later
+	// run is refused until someone stops it by hand. The timeout kills the
+	// child, which lets cmd.Wait return and clears the guard on its own.
+	ctx, cancel := runContext(mr.cfg.RunTimeout)
 	cmd := exec.CommandContext(ctx, mr.cfg.ExploPath, args...)
 	// Strip WEB_UI from env so the child process runs normally, not as web server.
 	env := make([]string, 0, len(os.Environ()))
@@ -176,4 +180,11 @@ func buildArgs(playlist, downloadMode, WebEnvPath string, replacePlaylist bool) 
 		args = append(args, "--replace-playlist=false")
 	}
 	return args
+}
+// runContext bounds a run, or leaves it unbounded when the timeout is zero.
+func runContext(timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		return context.WithCancel(context.Background())
+	}
+	return context.WithTimeout(context.Background(), timeout)
 }
