@@ -134,15 +134,20 @@ func (c Slskd) qualityFiltered(dir peerDir) []File {
 	kept := make([]File, 0, len(dir.files))
 
 	for _, file := range dir.files {
-		isPrimary := dir.primary != nil && file.Name == dir.primary.Name
-		if !isPrimary {
-			if file.BitRate > 0 && file.BitRate < c.Cfg.Filters.MinBitRate {
-				continue
-			}
-			if file.BitDepth > 0 && file.BitDepth < c.Cfg.Filters.MinBitDepth {
+		// The ceiling applies to every file including the primary: it is about
+		// how much gets transferred, not how good the track is, and a single
+		// oversized primary is exactly what it exists to stop.
+		if c.Cfg.Filters.MaxBitRate > 0 {
+			if rate := effectiveBitRate(file); rate > 0 && rate > c.Cfg.Filters.MaxBitRate {
 				continue
 			}
 		}
+
+		isPrimary := dir.primary != nil && file.Name == dir.primary.Name
+		if !isPrimary && !c.withinQualityRange(file) {
+			continue
+		}
+
 		kept = append(kept, file)
 	}
 	return kept

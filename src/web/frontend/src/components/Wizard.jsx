@@ -10,6 +10,7 @@
 
 import { useState } from 'react'
 import { wizardStep1, wizardStep2, wizardStep3, prefetchPlaylists } from '../lib/api'
+import QualityRange from './ui/QualityRange'
 import { ToggleRow } from './ui/Toggle'
 import { DirInput } from './ui/DirInput'
 import { TextField } from './ui/common'
@@ -481,6 +482,8 @@ function Step3({ fields, setField, envSources, onBack, onFinish, saving }) {
     slskdApiKey,
     slskdAlbumMode,
     extensions,
+    minBitrate,
+    maxBitrate,
   } = fields;
   const isLocked = (key) => envSources[key] === "env";
 
@@ -560,11 +563,17 @@ function Step3({ fields, setField, envSources, onBack, onFinish, saving }) {
                 <input type="text" className={inputCls} value={slskdApiKey} onChange={e => setField('slskdApiKey', e.target.value)}
                   autoComplete="off" spellCheck={false} disabled={isLocked('SLSKD_API_KEY')} />
               </TextField>
-              <TextField label="File extensions"
-                hint="Comma-separated list of extensions to prefer, in priority order. No spaces.">
-                <input type="text" className={inputCls} value={extensions} onChange={e => setField('extensions', e.target.value)}
-                  placeholder="flac,mp3" autoComplete="off" spellCheck={false} disabled={isLocked('EXTENSIONS')} />
-              </TextField>
+              <QualityRange
+                extensions={extensions}
+                minBitrate={minBitrate}
+                maxBitrate={maxBitrate}
+                isLocked={isLocked('EXTENSIONS')}
+                onChange={next => {
+                  setField('extensions', next.extensions)
+                  setField('minBitrate', next.minBitrate)
+                  setField('maxBitrate', next.maxBitrate)
+                }}
+              />
               <ToggleRow
                 checked={slskdAlbumMode}
                 onChange={(v) => setField("slskdAlbumMode", v)}
@@ -673,7 +682,9 @@ export default function Wizard({
       slskdUrl: config.SLSKD_URL || "",
       slskdApiKey: config.SLSKD_API_KEY || "",
       slskdAlbumMode: config.SLSKD_ALBUM_MODE === "true",
-      extensions: config.EXTENSIONS || "",
+      extensions: config.EXTENSIONS || "flac,mp3",
+      minBitrate: parseInt(config.MIN_BITRATE) || 256,
+      maxBitrate: parseInt(config.MAX_BITRATE) || 0,
       adminAuthMethod: config.ADMIN_AUTH_METHOD || "password",
       adminApiKey: config.ADMIN_API_KEY || "",
       adminSystemUsername: config.ADMIN_SYSTEM_USERNAME || "",
@@ -760,6 +771,8 @@ export default function Wizard({
         slskd_api_key: fields.slskdApiKey,
         slskd_album_mode: fields.slskdAlbumMode,
         extensions: fields.extensions,
+        min_bitrate: fields.minBitrate,
+        max_bitrate: fields.maxBitrate,
       });
       onComplete();
     } catch (e) {
