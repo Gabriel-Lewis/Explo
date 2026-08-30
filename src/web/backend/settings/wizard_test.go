@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"explo/src/web/backend/app"
@@ -168,14 +169,37 @@ func TestWizardStep3_DefaultsTheSizePreference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading written env: %v", err)
 	}
-	if !bytes.Contains(written, []byte("SIZE_PREFERENCE=none")) {
-		t.Errorf("an absent preference was not defaulted:\n%s", written)
-	}
+	assertEnvValue(t, written, "SIZE_PREFERENCE", "none")
 }
 
 func TestSizePreferenceIsReadableByTheUI(t *testing.T) {
 	if !slices.Contains(defs.AllConfigKeys, "SIZE_PREFERENCE") {
 		t.Error("SIZE_PREFERENCE missing from AllConfigKeys; the control would always read back as its default")
+	}
+}
+
+// envValue reads a key's written value, ignoring commented lines. sample.env
+// documents every key as a comment carrying its default, so a plain substring
+// search for "KEY=default" matches that comment and passes whether or not the
+// wizard wrote anything at all.
+func envValue(written []byte, key string) string {
+	for _, line := range strings.Split(string(written), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		if name, value, ok := strings.Cut(line, "="); ok && strings.TrimSpace(name) == key {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func assertEnvValue(t *testing.T, written []byte, key, want string) {
+	t.Helper()
+
+	if got := envValue(written, key); got != want {
+		t.Errorf("%s = %q, want %q\n%s", key, got, want, written)
 	}
 }
 
@@ -206,9 +230,7 @@ func TestWizardStep3_DefaultsTheReleasePreference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading written env: %v", err)
 	}
-	if !bytes.Contains(written, []byte("RELEASE_PREFERENCE=fuller")) {
-		t.Errorf("an absent release preference was not defaulted:\n%s", written)
-	}
+	assertEnvValue(t, written, "RELEASE_PREFERENCE", "fuller")
 }
 
 func TestReleasePreferenceIsReadableByTheUI(t *testing.T) {
@@ -229,9 +251,7 @@ func TestWizardStep3_PersistsPreferOriginalRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading written env: %v", err)
 	}
-	if !bytes.Contains(written, []byte("PREFER_ORIGINAL_RELEASE=false")) {
-		t.Errorf("written env does not record the original-release preference:\n%s", written)
-	}
+	assertEnvValue(t, written, "PREFER_ORIGINAL_RELEASE", "false")
 }
 
 // This one defaults to on, so an omitted key must not read as "off". A plain
@@ -246,9 +266,7 @@ func TestWizardStep3_DefaultsPreferOriginalReleaseToOn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading written env: %v", err)
 	}
-	if !bytes.Contains(written, []byte("PREFER_ORIGINAL_RELEASE=true")) {
-		t.Errorf("an absent original-release preference was not defaulted to on:\n%s", written)
-	}
+	assertEnvValue(t, written, "PREFER_ORIGINAL_RELEASE", "true")
 }
 
 func TestPreferOriginalReleaseIsReadableByTheUI(t *testing.T) {
