@@ -40,6 +40,16 @@ func newInstance(t *testing.T, cookieName string) *instance {
 	return &instance{manager: manager, server: server}
 }
 
+// closeBody releases a response body, reporting rather than swallowing a
+// failure to do so.
+func closeBody(t *testing.T, resp *http.Response) {
+	t.Helper()
+
+	if err := resp.Body.Close(); err != nil {
+		t.Errorf("closing response body: %v", err)
+	}
+}
+
 // get drives one request from the shared browser jar.
 func get(t *testing.T, client *http.Client, url string) int {
 	t.Helper()
@@ -48,7 +58,7 @@ func get(t *testing.T, client *http.Client, url string) int {
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
-	defer resp.Body.Close()
+	defer closeBody(t, resp)
 
 	return resp.StatusCode
 }
@@ -124,7 +134,7 @@ func TestSessionCookie_UsesTheConfiguredName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /login: %v", err)
 	}
-	defer resp.Body.Close()
+	defer closeBody(t, resp)
 
 	for _, cookie := range resp.Cookies() {
 		if cookie.Name == name {
