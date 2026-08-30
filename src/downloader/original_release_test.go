@@ -301,3 +301,86 @@ func TestCollectAlbumFiles_LeavesReleasesAloneWhenDisabled(t *testing.T) {
 		t.Fatalf("queued %d files with the setting off, want all 5 untouched", len(files))
 	}
 }
+
+// The hole PR #19 left open. ListenBrainz resolved the recording to a two-disc
+// deluxe, so DiscTotal says 2 and the flattened directory was kept whole -- the
+// exact failure the feature exists to prevent. The group's consensus knows the
+// album is single-disc.
+func TestTrimToOriginal_ConsensusBeatsADeluxeMatch(t *testing.T) {
+	dir := numberedDir("Bad Guy",
+		"01-01 Bury A Friend.flac", "01-02 Bad Guy.flac", "01-03 Xanny.flac",
+		"02-01 Demo Take.flac", "02-02 Alternate Mix.flac",
+	)
+
+	trimToOriginal(&dir, models.Track{
+		CleanTitle:          "Bad Guy",
+		TrackTotal:          23, // the deluxe's length
+		DiscTotal:           2,  // the deluxe's disc count
+		CanonicalTrackTotal: 3,
+		CanonicalDiscTotal:  1,
+	})
+
+	if len(dir.files) != 3 {
+		t.Fatalf("kept %d files %v, want the 3 on disc one", len(dir.files), fileNames(dir))
+	}
+}
+
+// A genuine double album has a group that agrees it is one, so consensus
+// winning must not amputate it.
+func TestTrimToOriginal_ConsensusKeepsAGenuineDoubleAlbum(t *testing.T) {
+	dir := numberedDir("Bad Guy",
+		"01-01 Bury A Friend.flac", "01-02 Bad Guy.flac",
+		"02-01 Xanny.flac", "02-02 Ilomilo.flac",
+	)
+
+	trimToOriginal(&dir, models.Track{
+		CleanTitle:          "Bad Guy",
+		CanonicalTrackTotal: 2,
+		CanonicalDiscTotal:  2,
+	})
+
+	if len(dir.files) != 4 {
+		t.Fatalf("kept %d files %v, want all 4", len(dir.files), fileNames(dir))
+	}
+}
+
+// Numbering that reads cleanly but repeats is describing something other than
+// one release. Cutting on it would drop the wrong files.
+func TestTrimToOriginal_SkipsWhenNumberingRepeats(t *testing.T) {
+	dir := numberedDir("Bad Guy",
+		"01 Bury A Friend.flac", "02 Bad Guy.flac", "03 Xanny.flac",
+		"01 Bury A Friend (Remaster).flac", "02 Bad Guy (Remaster).flac",
+	)
+
+	trimToOriginal(&dir, models.Track{CleanTitle: "Bad Guy", CanonicalTrackTotal: 3, CanonicalDiscTotal: 1})
+
+	if len(dir.files) != 5 {
+		t.Fatalf("kept %d files %v, want all 5 left alone", len(dir.files), fileNames(dir))
+	}
+}
+
+func TestExpectedAlbumLength_PrefersTheConsensus(t *testing.T) {
+	got := expectedAlbumLength(models.Track{TrackTotal: 23, CanonicalTrackTotal: 16})
+	if got != 16 {
+		t.Errorf("expectedAlbumLength() = %d, want the consensus 16", got)
+	}
+	if got := expectedAlbumLength(models.Track{TrackTotal: 23}); got != 23 {
+		t.Errorf("without a consensus = %d, want the matched release's 23", got)
+	}
+}
+
+// Everything above must be inert with enrichment off, leaving PR #19's
+// behaviour byte for byte.
+func TestTrimToOriginal_UnchangedWithoutAConsensus(t *testing.T) {
+	dir := numberedDir("Bad Guy",
+		"01-01 Bury A Friend.flac", "01-02 Bad Guy.flac",
+		"02-01 Xanny.flac", "02-02 Ilomilo.flac",
+	)
+
+	trimToOriginal(&dir, models.Track{CleanTitle: "Bad Guy", TrackTotal: 2, DiscTotal: 2})
+
+	if len(dir.files) != 4 {
+		t.Fatalf("kept %d files %v, want DiscTotal still honoured with no consensus",
+			len(dir.files), fileNames(dir))
+	}
+}

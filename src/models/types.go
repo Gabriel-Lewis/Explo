@@ -32,6 +32,12 @@ type Track struct {
 	TrackTotal                int    // Total tracks in media
 	DiscNumber                int    // Disc/media position
 	DiscTotal                 int    // Total discs/media
+	// Canonical* describe the album as its release group agrees it is, rather
+	// than as the one matched release happens to be. A recommendation resolving
+	// to a deluxe edition still reports the standard album's shape here, which
+	// is what album mode needs to recognise a padded release.
+	CanonicalTrackTotal       int // Modal first-medium track count across the release group
+	CanonicalDiscTotal        int // Modal medium count across the release group
 	MusicBrainzReleaseGroupID string
 	MusicBrainzAlbumArtistID  string
 	MusicBrainzTrackID        string
