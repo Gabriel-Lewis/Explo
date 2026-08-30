@@ -62,7 +62,19 @@ export function stopIndexFor(bitrate, fallback) {
   return best
 }
 
-export default function QualityRange({ extensions, minBitrate, maxBitrate, onChange, isLocked }) {
+export const PREFERENCES = [
+  { value: 'smaller', label: 'Prefer smaller' },
+  { value: 'none', label: 'No preference' },
+  { value: 'larger', label: 'Prefer larger' },
+]
+
+const PREFERENCE_HINTS = {
+  smaller: 'Takes the best lossy file it can find, and only falls back to lossless when there is none.',
+  none: 'Order of the formats above decides, as it always has.',
+  larger: 'Takes the best lossless file it can find, and falls back to lossy when there is none.',
+}
+
+export default function QualityRange({ extensions, minBitrate, maxBitrate, sizePreference, onChange, isLocked }) {
   const trackRef = useRef(null)
   const [drag, setDrag] = useState(null)
 
@@ -79,8 +91,9 @@ export default function QualityRange({ extensions, minBitrate, maxBitrate, onCha
       extensions: next.extensions ?? extensions,
       minBitrate: next.lo === undefined ? minBitrate : BITRATE_STOPS[next.lo] || 128,
       maxBitrate: next.hi === undefined ? maxBitrate : BITRATE_STOPS[next.hi],
+      sizePreference: next.sizePreference ?? sizePreference,
     })
-  }, [extensions, minBitrate, maxBitrate, onChange])
+  }, [extensions, minBitrate, maxBitrate, sizePreference, onChange])
 
   function toggleFormat(ext) {
     if (isLocked) return
@@ -129,7 +142,10 @@ export default function QualityRange({ extensions, minBitrate, maxBitrate, onCha
       <div>
         <p className="text-[13px] font-medium mb-0.5">Accepted formats</p>
         <p className="text-[11.5px] text-muted mb-2">
-          Only these are considered. Order in the config file still decides which is preferred.
+          Only these are considered.{' '}
+          {(sizePreference || 'none') === 'none'
+            ? 'With no preference set below, their order in the config file decides which is tried first.'
+            : 'Which is tried first is decided by the preference below, not by their order.'}
         </p>
         <div className="flex flex-col gap-px">
           {FORMATS.map(f => (
@@ -210,6 +226,37 @@ export default function QualityRange({ extensions, minBitrate, maxBitrate, onCha
           {selected.length === 0 && (
             <span className="text-danger"> No formats selected — every file would be rejected.</span>
           )}
+        </p>
+      </div>
+
+      <div>
+        <p className="text-[13px] font-medium mb-0.5">Within that range, reach for</p>
+        <p className="text-[11.5px] text-muted mb-2">
+          This orders candidates; it never rejects one. Whichever end you prefer, the best file of
+          that kind wins — preferring smaller still takes a 320 over a 256.
+        </p>
+        <div className="flex gap-1">
+          {PREFERENCES.map(p => {
+            const active = (sizePreference || 'none') === p.value
+            return (
+              <button
+                key={p.value}
+                type="button"
+                disabled={isLocked}
+                onClick={() => emit({ sizePreference: p.value })}
+                className={`flex-1 rounded-[6px] border px-2 py-2.5 text-[12px] transition-colors
+                  ${active
+                    ? 'border-accent bg-[#17492c] text-white'
+                    : 'border-ui-border bg-well text-muted hover:border-[#3a3a3a]'}
+                  ${isLocked ? 'opacity-45 cursor-not-allowed' : 'cursor-pointer'}`}
+              >
+                {p.label}
+              </button>
+            )
+          })}
+        </div>
+        <p className="text-[11.5px] text-muted mt-2">
+          {PREFERENCE_HINTS[sizePreference || 'none']}
         </p>
       </div>
     </div>

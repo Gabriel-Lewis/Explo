@@ -138,3 +138,43 @@ func TestBitrateRangeIsReadableByTheUI(t *testing.T) {
 		}
 	}
 }
+
+// The preference is only useful if the wizard writes what the downloader reads.
+func TestWizardStep3_PersistsTheSizePreference(t *testing.T) {
+	s, envPath := newSettings(t)
+
+	postStep3(t, s, map[string]any{
+		"download_services": []string{"slskd"},
+		"size_preference":   "smaller",
+	})
+
+	written, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("reading written env: %v", err)
+	}
+	if !bytes.Contains(written, []byte("SIZE_PREFERENCE=smaller")) {
+		t.Errorf("written env does not record the preference:\n%s", written)
+	}
+}
+
+// An absent value must record the default rather than blanking the key, which
+// is what UpdateEnvKeys does with an empty string.
+func TestWizardStep3_DefaultsTheSizePreference(t *testing.T) {
+	s, envPath := newSettings(t)
+
+	postStep3(t, s, map[string]any{"download_services": []string{"slskd"}})
+
+	written, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("reading written env: %v", err)
+	}
+	if !bytes.Contains(written, []byte("SIZE_PREFERENCE=none")) {
+		t.Errorf("an absent preference was not defaulted:\n%s", written)
+	}
+}
+
+func TestSizePreferenceIsReadableByTheUI(t *testing.T) {
+	if !slices.Contains(defs.AllConfigKeys, "SIZE_PREFERENCE") {
+		t.Error("SIZE_PREFERENCE missing from AllConfigKeys; the control would always read back as its default")
+	}
+}
