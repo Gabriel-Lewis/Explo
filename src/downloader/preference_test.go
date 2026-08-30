@@ -413,3 +413,30 @@ func TestNormaliseReleasePreference(t *testing.T) {
 		}
 	}
 }
+
+// The scorer has the same deluxe-match problem as the trim: bailing on the
+// matched release's DiscTotal hands a padded directory the fuller-release score.
+func TestExpectedTrackCount_ConsensusBeatsADeluxeMatch(t *testing.T) {
+	expected, ok := expectedTrackCount(models.Track{
+		TrackTotal: 23, DiscTotal: 2,
+		CanonicalTrackTotal: 16, CanonicalDiscTotal: 1,
+	})
+
+	if !ok {
+		t.Fatal("expectedTrackCount() gave up despite a single-disc consensus")
+	}
+	if expected != 16 {
+		t.Errorf("expected = %d, want the consensus 16", expected)
+	}
+}
+
+// A genuine double album must still bail: its first-medium count cannot measure
+// a complete two-disc directory.
+func TestExpectedTrackCount_StillBailsOnARealDoubleAlbum(t *testing.T) {
+	if _, ok := expectedTrackCount(models.Track{
+		TrackTotal: 13, DiscTotal: 2,
+		CanonicalTrackTotal: 13, CanonicalDiscTotal: 2,
+	}); ok {
+		t.Error("expectedTrackCount() answered for a 2-disc consensus; the complete release would be punished")
+	}
+}

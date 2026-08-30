@@ -149,36 +149,43 @@ type TopRecordings struct {
 }
 
 type MBRecording struct {
-	ID       string `json:"id"`
-	Releases []struct {
-		ID           string `json:"id"`
-		Title        string `json:"title"`
-		Status       string `json:"status"`
-		Country      string `json:"country"`
-		Date         string `json:"date"`
-		Year         int    `json:"year,omitempty"`
-		ArtistCredit []struct {
-			Name   string `json:"name"`
-			Artist struct {
-				ID       string `json:"id"`
-				SortName string `json:"sort-name"`
-			} `json:"artist"`
-		} `json:"artist-credit"`
-		ReleaseGroup struct {
-			ID          string `json:"id"`
-			PrimaryType string `json:"primary-type"`
-		} `json:"release-group"`
-		Media []struct {
-			Position   int    `json:"position"`
-			Format     string `json:"format"`
-			TrackCount int    `json:"track-count"`
-			Tracks     []struct {
-				ID       string `json:"id"`
-				Position int    `json:"position"`
-				Number   string `json:"number"`
-			} `json:"tracks"`
-		} `json:"media"`
-	} `json:"releases"`
+	ID       string      `json:"id"`
+	Releases []MBRelease `json:"releases"`
+}
+
+// MBRelease is one release carrying the recording. Named rather than anonymous
+// so the release-group consensus can be computed by a helper that takes it.
+type MBRelease struct {
+	ID           string `json:"id"`
+	Title        string `json:"title"`
+	Status       string `json:"status"`
+	Country      string `json:"country"`
+	Date         string `json:"date"`
+	Year         int    `json:"year,omitempty"`
+	ArtistCredit []struct {
+		Name   string `json:"name"`
+		Artist struct {
+			ID       string `json:"id"`
+			SortName string `json:"sort-name"`
+		} `json:"artist"`
+	} `json:"artist-credit"`
+	ReleaseGroup struct {
+		ID          string `json:"id"`
+		PrimaryType string `json:"primary-type"`
+	} `json:"release-group"`
+	Media []MBMedium `json:"media"`
+}
+
+// MBMedium is one disc of a release.
+type MBMedium struct {
+	Position   int    `json:"position"`
+	Format     string `json:"format"`
+	TrackCount int    `json:"track-count"`
+	Tracks     []struct {
+		ID       string `json:"id"`
+		Position int    `json:"position"`
+		Number   string `json:"number"`
+	} `json:"tracks"`
 }
 
 type TitleArgs struct {
@@ -482,6 +489,8 @@ func (c *ListenBrainz) enrichTracks(tracks []*models.Track, singleArtist bool) (
 		discTotal := 0
 		mbReleaseTrackID := ""
 		releaseType := ""
+		canonicalTrackTotal := 0
+		canonicalDiscTotal := 0
 
 		var mbData *MBRecording
 		var mbErr error
@@ -525,6 +534,10 @@ func (c *ListenBrainz) enrichTracks(tracks []*models.Track, singleArtist bool) (
 					mbAlbumArtistID = bestRelease.ArtistCredit[0].Artist.ID
 					artistSort = bestRelease.ArtistCredit[0].Artist.SortName
 				}
+
+				// Consensus over the whole group, not just the release the
+				// lookup landed on. Free: these releases are already parsed.
+				canonicalTrackTotal, canonicalDiscTotal = CanonicalReleaseShape(mbData.Releases, mbReleaseGroupID)
 
 				discTotal = len(bestRelease.Media)
 				if len(bestRelease.Media) > 0 {
@@ -572,6 +585,8 @@ func (c *ListenBrainz) enrichTracks(tracks []*models.Track, singleArtist bool) (
 			TrackTotal:                trackTotal,
 			DiscNumber:                discNumber,
 			DiscTotal:                 discTotal,
+			CanonicalTrackTotal:       canonicalTrackTotal,
+			CanonicalDiscTotal:        canonicalDiscTotal,
 			MusicBrainzTrackID:        track.MusicBrainzTrackID,
 			MusicBrainzAlbumID:        recording.Release.CaaReleaseMbid,
 			MusicBrainzReleaseGroupID: mbReleaseGroupID,

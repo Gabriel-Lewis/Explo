@@ -200,18 +200,32 @@ func normaliseReleasePreference(pref string) string {
 // expectedTrackCount reports how many files a correct release should hold, and
 // whether that is knowable at all.
 //
-// TrackTotal comes from MusicBrainz during enrichment and counts the first
+// The count comes from MusicBrainz during enrichment and covers the first
 // medium only. A multi-disc release therefore legitimately holds more files
-// than TrackTotal, so a closeness score would punish the complete release for
-// being complete -- better to admit we cannot tell.
+// than that, so a closeness score would punish the complete release for being
+// complete -- better to admit we cannot tell.
+//
+// Which disc count decides that is the subtle part. The matched release may be
+// a two-disc deluxe of a single-disc album, and bailing on its DiscTotal would
+// hand the padded directory the fuller-release score it should have lost. The
+// release group's consensus is asked first and the matched release only when
+// there is none, so a genuine double album still bails while a deluxe-edition
+// mismatch does not.
 func expectedTrackCount(track models.Track) (int, bool) {
-	if track.TrackTotal <= 0 {
+	expected := expectedAlbumLength(track)
+	if expected <= 0 {
 		return 0, false
+	}
+	if discs := track.CanonicalDiscTotal; discs > 0 {
+		if discs > 1 {
+			return 0, false
+		}
+		return expected, true
 	}
 	if track.DiscTotal > 1 {
 		return 0, false
 	}
-	return track.TrackTotal, true
+	return expected, true
 }
 
 // releaseSizeScore rewards a release for being the size it ought to be.

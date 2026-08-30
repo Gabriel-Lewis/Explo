@@ -106,15 +106,32 @@ const minParsedShare = 2.0 / 3.0
 
 // allowedDiscs is how many discs the release may legitimately span.
 //
-// MusicBrainz is trusted when it has an answer: a real double album keeps both
-// discs. With no answer the assumption is one disc, because the case this
-// exists for -- a peer flattening several discs into a single folder -- is far
-// more common than an unenriched genuine double album.
+// The release group's consensus outranks the matched release. A recommendation
+// that resolved to a two-disc deluxe reports DiscTotal 2, and trusting that
+// would keep the padded directory whole -- the exact failure this feature
+// exists to prevent. What the album's other editions agree on is the better
+// answer, and a genuine double album has a group that agrees on two.
+//
+// With no consensus the matched release is used, and with neither the
+// assumption is one disc: a peer flattening several discs into a single folder
+// is far more common than an unenriched genuine double album.
 func allowedDiscs(track models.Track) int {
+	if track.CanonicalDiscTotal > 0 {
+		return track.CanonicalDiscTotal
+	}
 	if track.DiscTotal > 1 {
 		return track.DiscTotal
 	}
 	return 1
+}
+
+// expectedAlbumLength is how many tracks the original album holds, preferring
+// the group's consensus over the matched release for the same reason.
+func expectedAlbumLength(track models.Track) int {
+	if track.CanonicalTrackTotal > 0 {
+		return track.CanonicalTrackTotal
+	}
+	return track.TrackTotal
 }
 
 // trimToOriginal reduces a candidate release to the original album: extra discs
@@ -138,6 +155,18 @@ func trimToOriginal(dir *peerDir, track models.Track) {
 		}
 	}
 	if float64(parsed) < float64(len(dir.files))*minParsedShare {
+		slog.Debug("not trimming release, numbering unreadable", "dir", dir.dir,
+			"parsed", parsed, "files", len(dir.files))
+		return
+	}
+	// Numbering that reads cleanly but repeats itself is describing something
+	// other than one release -- two editions side by side, or a misparse. Either
+	// way the positions cannot say which files are the album, and cutting on
+	// them would drop the wrong ones. Leaving the release whole is the safe
+	// failure; this is the only place where a wrong answer is worse than none.
+	if dup, ok := duplicatePosition(numbering); ok {
+		slog.Debug("not trimming release, numbering repeats", "dir", dir.dir,
+			"disc", dup.disc, "track", dup.track)
 		return
 	}
 
@@ -166,8 +195,10 @@ func trimToOriginal(dir *peerDir, track models.Track) {
 		return
 	}
 
-	slog.Debug("trimmed release to the original album",
-		"dir", dir.dir, "from", len(dir.files), "to", len(kept))
+	// Info, not Debug: this changes what gets downloaded, so it belongs in the
+	// run log beside "album release selected" rather than being invisible.
+	slog.Info("trimmed release to the original album",
+		"dir", dir.dir, "from", len(dir.files), "to", len(kept), "discs kept", discs)
 
 	dir.files = kept
 	// dir.primary points into the old backing array, so it has to be re-seated
@@ -179,6 +210,25 @@ func trimToOriginal(dir *peerDir, track models.Track) {
 			break
 		}
 	}
+}
+
+// duplicatePosition reports the first (disc, track) position claimed by more
+// than one file, if any.
+func duplicatePosition(numbering []fileNumbering) (fileNumbering, bool) {
+	type position struct{ disc, track int }
+
+	seen := make(map[position]bool, len(numbering))
+	for _, n := range numbering {
+		if !n.ok {
+			continue
+		}
+		at := position{n.disc, n.track}
+		if seen[at] {
+			return n, true
+		}
+		seen[at] = true
+	}
+	return fileNumbering{}, false
 }
 
 // trimExtraDiscs drops discs beyond what the release may legitimately span,
@@ -215,7 +265,7 @@ func trimExtraDiscs(dir *peerDir, numbering []fileNumbering, keep []bool, track 
 // the lowest TrackTotal positions are the album. Files with no readable track
 // number sort last and are therefore the first to go.
 func trimBonusTracks(dir *peerDir, numbering []fileNumbering, keep []bool, track models.Track) {
-	expected := track.TrackTotal
+	expected := expectedAlbumLength(track)
 	if expected <= 0 {
 		return
 	}
