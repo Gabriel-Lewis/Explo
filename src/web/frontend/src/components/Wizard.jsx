@@ -485,6 +485,7 @@ function Step3({ fields, setField, envSources, onBack, onFinish, saving }) {
     minBitrate,
     maxBitrate,
     sizePreference,
+    releasePreference,
   } = fields;
   const isLocked = (key) => envSources[key] === "env";
 
@@ -584,6 +585,40 @@ function Step3({ fields, setField, envSources, onBack, onFinish, saving }) {
                 name="Download full albums"
                 desc="Fetch the whole release each recommendation belongs to. Only the recommended track is added to the playlist; the rest land in your library. Downloads much more per run."
               />
+              <Collapse open={slskdAlbumMode}>
+                <div className="flex flex-col gap-1.5 pt-3 pb-1">
+                  <p className="text-[13px] font-medium">Which release to take</p>
+                  <p className="text-[11.5px] text-muted">
+                    Smaller picks the edition closest to the album's real length, so a 21-track
+                    deluxe does not arrive in place of the 11-track album. Needs Enrich track
+                    metadata, since that is where the real length comes from; without it this
+                    falls back to taking the fuller release.
+                  </p>
+                  <div className="flex gap-1 pt-1">
+                    {[
+                      { value: 'fuller', label: 'Fuller release' },
+                      { value: 'smaller', label: 'Smaller release' },
+                    ].map(opt => {
+                      const active = (releasePreference || 'fuller') === opt.value
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          disabled={isLocked('RELEASE_PREFERENCE')}
+                          onClick={() => setField('releasePreference', opt.value)}
+                          className={`flex-1 rounded-[6px] border px-2 py-2.5 text-[12px] transition-colors
+                            ${active
+                              ? 'border-accent bg-[#17492c] text-white'
+                              : 'border-ui-border bg-well text-muted hover:border-[#3a3a3a]'}
+                            ${isLocked('RELEASE_PREFERENCE') ? 'opacity-45 cursor-not-allowed' : 'cursor-pointer'}`}
+                        >
+                          {opt.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              </Collapse>
               {/* Show keyword exclusion when YouTube isn't enabled — otherwise it lives in the YouTube section */}
               <Collapse open={!dlServices.youtube}>
                 <TextField label="Exclude keywords"
@@ -689,6 +724,7 @@ export default function Wizard({
       minBitrate: parseInt(config.MIN_BITRATE) || 256,
       maxBitrate: parseInt(config.MAX_BITRATE) || 0,
       sizePreference: config.SIZE_PREFERENCE || "none",
+      releasePreference: config.RELEASE_PREFERENCE || "fuller",
       adminAuthMethod: config.ADMIN_AUTH_METHOD || "password",
       adminApiKey: config.ADMIN_API_KEY || "",
       adminSystemUsername: config.ADMIN_SYSTEM_USERNAME || "",
@@ -778,6 +814,7 @@ export default function Wizard({
         min_bitrate: fields.minBitrate,
         max_bitrate: fields.maxBitrate,
         size_preference: fields.sizePreference,
+        release_preference: fields.releasePreference,
       });
       onComplete();
     } catch (e) {

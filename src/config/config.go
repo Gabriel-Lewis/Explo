@@ -153,6 +153,10 @@ type Slskd struct {
 	// lossy file and falls back to lossless only when there is none; "larger"
 	// is the reverse.
 	SizePreference   string `env:"SIZE_PREFERENCE" env-default:"none"`
+	// Which release to reach for in album mode: "fuller" takes the most
+	// complete one, as it always has; "smaller" takes the one closest to the
+	// album's real track count, which needs ENRICH_TRACK_METADATA to know it.
+	ReleasePreference string `env:"RELEASE_PREFERENCE" env-default:"fuller"`
 	// Download every track in the release the matched file sits in, rather
 	// than the single recommended track. Off by default: it multiplies how
 	// much is transferred per recommendation.

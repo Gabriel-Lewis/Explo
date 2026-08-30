@@ -178,3 +178,41 @@ func TestSizePreferenceIsReadableByTheUI(t *testing.T) {
 		t.Error("SIZE_PREFERENCE missing from AllConfigKeys; the control would always read back as its default")
 	}
 }
+
+func TestWizardStep3_PersistsTheReleasePreference(t *testing.T) {
+	s, envPath := newSettings(t)
+
+	postStep3(t, s, map[string]any{
+		"download_services":  []string{"slskd"},
+		"release_preference": "smaller",
+	})
+
+	written, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("reading written env: %v", err)
+	}
+	if !bytes.Contains(written, []byte("RELEASE_PREFERENCE=smaller")) {
+		t.Errorf("written env does not record the release preference:\n%s", written)
+	}
+}
+
+// An absent value must record the default rather than blanking the key.
+func TestWizardStep3_DefaultsTheReleasePreference(t *testing.T) {
+	s, envPath := newSettings(t)
+
+	postStep3(t, s, map[string]any{"download_services": []string{"slskd"}})
+
+	written, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("reading written env: %v", err)
+	}
+	if !bytes.Contains(written, []byte("RELEASE_PREFERENCE=fuller")) {
+		t.Errorf("an absent release preference was not defaulted:\n%s", written)
+	}
+}
+
+func TestReleasePreferenceIsReadableByTheUI(t *testing.T) {
+	if !slices.Contains(defs.AllConfigKeys, "RELEASE_PREFERENCE") {
+		t.Error("RELEASE_PREFERENCE missing from AllConfigKeys; the control would always read back as its default")
+	}
+}
