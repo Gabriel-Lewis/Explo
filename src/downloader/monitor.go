@@ -10,6 +10,11 @@ import (
 	"time"
 )
 
+// maxPollFailures is how many consecutive status polls may fail before the
+// monitor gives up. Anything less than the whole run is worth surviving: the
+// downloads themselves keep going, and only the monitor loses sight of them.
+const maxPollFailures = 3
+
 type Monitor interface {
 	GetDownloadStatus([]*models.Track) (map[string]FileStatus, error)
 	GetConf() (MonitorConfig, error)
@@ -63,11 +68,25 @@ func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) err
 	ticker := time.NewTicker(monCfg.CheckInterval)
 	defer ticker.Stop()
 
+	var pollFailures int
+
 	for range ticker.C {
 		statuses, err := m.GetDownloadStatus(tracks)
 		if err != nil {
-			return fmt.Errorf("[%s/monitor] error fetching download status: %s", monCfg.Service, err.Error())
+			// A failed poll used to end monitoring for every track at once, so
+			// one blip -- a restarted service, a dropped connection -- cost the
+			// whole playlist, since tracks that never reach Present are dropped
+			// before it is built. Ride out a few and try again on the next tick.
+			pollFailures++
+			if pollFailures >= maxPollFailures {
+				return fmt.Errorf("[%s/monitor] error fetching download status %d times in a row, giving up: %s",
+					monCfg.Service, pollFailures, err.Error())
+			}
+			slog.Warn("[monitor] couldn't fetch download status, retrying",
+				"service", monCfg.Service, "attempt", pollFailures, "context", err.Error())
+			continue
 		}
+		pollFailures = 0
 
 		currentTime := time.Now().Local()
 
