@@ -216,3 +216,43 @@ func TestReleasePreferenceIsReadableByTheUI(t *testing.T) {
 		t.Error("RELEASE_PREFERENCE missing from AllConfigKeys; the control would always read back as its default")
 	}
 }
+
+func TestWizardStep3_PersistsPreferOriginalRelease(t *testing.T) {
+	s, envPath := newSettings(t)
+
+	postStep3(t, s, map[string]any{
+		"download_services":       []string{"slskd"},
+		"prefer_original_release": false,
+	})
+
+	written, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("reading written env: %v", err)
+	}
+	if !bytes.Contains(written, []byte("PREFER_ORIGINAL_RELEASE=false")) {
+		t.Errorf("written env does not record the original-release preference:\n%s", written)
+	}
+}
+
+// This one defaults to on, so an omitted key must not read as "off". A plain
+// bool on the request body cannot tell the two apart, which is why the field is
+// a pointer.
+func TestWizardStep3_DefaultsPreferOriginalReleaseToOn(t *testing.T) {
+	s, envPath := newSettings(t)
+
+	postStep3(t, s, map[string]any{"download_services": []string{"slskd"}})
+
+	written, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("reading written env: %v", err)
+	}
+	if !bytes.Contains(written, []byte("PREFER_ORIGINAL_RELEASE=true")) {
+		t.Errorf("an absent original-release preference was not defaulted to on:\n%s", written)
+	}
+}
+
+func TestPreferOriginalReleaseIsReadableByTheUI(t *testing.T) {
+	if !slices.Contains(defs.AllConfigKeys, "PREFER_ORIGINAL_RELEASE") {
+		t.Error("PREFER_ORIGINAL_RELEASE missing from AllConfigKeys; the toggle would always read back as its default")
+	}
+}

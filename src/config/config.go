@@ -161,6 +161,11 @@ type Slskd struct {
 	// complete one, as it always has; "smaller" takes the one closest to the
 	// album's real track count, which needs ENRICH_TRACK_METADATA to know it.
 	ReleasePreference string `env:"RELEASE_PREFERENCE" env-default:"fuller"`
+	// Trim a candidate release down to the original album before downloading it:
+	// drop extra discs a peer has flattened into one directory, and drop bonus
+	// tracks appended past the album's real length. Needs ENRICH_TRACK_METADATA
+	// for the bonus-track half; disc trimming works without it.
+	PreferOriginalRelease bool `env:"PREFER_ORIGINAL_RELEASE" env-default:"true"`
 	// Download every track in the release the matched file sits in, rather
 	// than the single recommended track. Off by default: it multiplies how
 	// much is transferred per recommendation.
