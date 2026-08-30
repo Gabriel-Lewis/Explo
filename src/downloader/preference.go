@@ -2,6 +2,8 @@ package downloader
 
 import (
 	"cmp"
+
+	"explo/src/models"
 	"slices"
 	"strings"
 )
@@ -161,4 +163,78 @@ func scorePreference(files []File, pref string) int {
 		return preferenceScore
 	}
 	return 0
+}
+
+// Release preferences. Where SizePreference is about how good each file is,
+// this is about how much of the release to take.
+const (
+	// PreferFullerRelease is how Explo has always chosen: the most complete
+	// directory wins.
+	PreferFullerRelease = "fuller"
+	// PreferSmallerRelease reaches for the release closest to the album's real
+	// track count, which is what keeps a 21-track deluxe edition from being
+	// downloaded in place of the 11-track album.
+	//
+	// Deliberately "closest" and not "fewest": a directory holding only the
+	// recommended track would win every time under fewest, and album mode
+	// would quietly stop fetching albums at all.
+	PreferSmallerRelease = "smaller"
+)
+
+// maxReleaseSizeScore caps every size term. Below the album (100) and artist
+// (50) terms in scoreDir, so being the right size can decide between releases
+// that match equally well but can never win against a better match.
+const maxReleaseSizeScore = 40
+
+// releaseSizeMissPenalty is how much each track of difference from the
+// expected count costs, so a release ten tracks out scores nothing.
+const releaseSizeMissPenalty = 4
+
+func normaliseReleasePreference(pref string) string {
+	if strings.EqualFold(strings.TrimSpace(pref), PreferSmallerRelease) {
+		return PreferSmallerRelease
+	}
+	return PreferFullerRelease
+}
+
+// expectedTrackCount reports how many files a correct release should hold, and
+// whether that is knowable at all.
+//
+// TrackTotal comes from MusicBrainz during enrichment and counts the first
+// medium only. A multi-disc release therefore legitimately holds more files
+// than TrackTotal, so a closeness score would punish the complete release for
+// being complete -- better to admit we cannot tell.
+func expectedTrackCount(track models.Track) (int, bool) {
+	if track.TrackTotal <= 0 {
+		return 0, false
+	}
+	if track.DiscTotal > 1 {
+		return 0, false
+	}
+	return track.TrackTotal, true
+}
+
+// releaseSizeScore rewards a release for being the size it ought to be.
+//
+// Without a usable expected count -- enrichment off, the lookup failed, or a
+// multi-disc release -- it falls back to preferring the fuller release rather
+// than guessing. Guessing is what would reopen the single-track hole: only
+// when the real track count is known can a lone file be recognised as either a
+// genuine single or a fragment of an album.
+func releaseSizeScore(dir peerDir, track models.Track, pref string) int {
+	if pref != PreferSmallerRelease {
+		return fullerReleaseScore(dir)
+	}
+
+	expected, ok := expectedTrackCount(track)
+	if !ok {
+		return fullerReleaseScore(dir)
+	}
+
+	diff := len(dir.files) - expected
+	if diff < 0 {
+		diff = -diff
+	}
+
+	return max(0, maxReleaseSizeScore-diff*releaseSizeMissPenalty)
 }
