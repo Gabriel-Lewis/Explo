@@ -490,6 +490,10 @@ func (s *Settings) HandleWizardStep3(w http.ResponseWriter, r *http.Request) {
 		MaxBitRate        int      `json:"max_bitrate"`
 		SizePreference    string   `json:"size_preference"`
 		ReleasePreference string   `json:"release_preference"`
+		// A pointer because this one defaults to on: a plain bool cannot tell
+		// "the client cleared it" from "the client did not send it", and would
+		// quietly disable the feature on every payload that omits the key.
+		PreferOriginalRelease *bool `json:"prefer_original_release"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -520,6 +524,10 @@ func (s *Settings) HandleWizardStep3(w http.ResponseWriter, r *http.Request) {
 	if body.ReleasePreference == "" {
 		body.ReleasePreference = "fuller"
 	}
+	preferOriginal := "true"
+	if body.PreferOriginalRelease != nil && !*body.PreferOriginalRelease {
+		preferOriginal = "false"
+	}
 	updates := map[string]string{
 		"DOWNLOAD_DIR":       body.DownloadDir,
 		"USE_SUBDIRECTORY":   useSubdir,
@@ -536,7 +544,10 @@ func (s *Settings) HandleWizardStep3(w http.ResponseWriter, r *http.Request) {
 		"MAX_BITRATE":        strconv.Itoa(body.MaxBitRate),
 		"SIZE_PREFERENCE":    body.SizePreference,
 		"RELEASE_PREFERENCE": body.ReleasePreference,
-		"WIZARD_COMPLETE":    "true",
+
+		"PREFER_ORIGINAL_RELEASE": preferOriginal,
+
+		"WIZARD_COMPLETE": "true",
 	}
 
 	if err := s.UpdateEnvKeys(updates, web.SampleEnv); err != nil {

@@ -142,6 +142,12 @@ func (c Slskd) scoreDirWithPreference(dir peerDir, track models.Track) int {
 	score -= fullerReleaseScore(dir)
 	score += releaseSizeScore(dir, track, normaliseReleasePreference(c.Cfg.ReleasePreference))
 
+	// Trimming equalises tracklists, so a reissue and the original become
+	// indistinguishable by file count. The year is what still separates them.
+	if c.Cfg.PreferOriginalRelease && laterThanOriginal(dir.dir, track) {
+		score -= originalYearPenalty
+	}
+
 	return score
 }
 
@@ -191,6 +197,12 @@ func (c Slskd) CollectAlbumFiles(track models.Track, results SearchResults) ([]F
 		}
 		if !findPrimary(dir, track) {
 			continue
+		}
+		// Before scoring, not after: a release still carrying its bonus discs
+		// would otherwise outscore the plain album on file count and win the
+		// comparison it should have lost.
+		if c.Cfg.PreferOriginalRelease {
+			trimToOriginal(dir, track)
 		}
 		if score := c.scoreDirWithPreference(*dir, track); best == nil || score > bestScore {
 			best, bestScore = dir, score

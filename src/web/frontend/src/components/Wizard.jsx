@@ -486,6 +486,7 @@ function Step3({ fields, setField, envSources, onBack, onFinish, saving }) {
     maxBitrate,
     sizePreference,
     releasePreference,
+    preferOriginalRelease,
   } = fields;
   const isLocked = (key) => envSources[key] === "env";
 
@@ -618,6 +619,13 @@ function Step3({ fields, setField, envSources, onBack, onFinish, saving }) {
                     })}
                   </div>
                 </div>
+                <ToggleRow
+                  checked={preferOriginalRelease}
+                  onChange={(v) => setField("preferOriginalRelease", v)}
+                  disabled={isLocked("PREFER_ORIGINAL_RELEASE")}
+                  name="Prefer the original album"
+                  desc="Trim a release back to the original album: drop extra discs a peer has flattened into one folder, then drop bonus tracks past the album's real length. A genuine double album is kept whole, and the recommended track is never trimmed away."
+                />
               </Collapse>
               {/* Show keyword exclusion when YouTube isn't enabled — otherwise it lives in the YouTube section */}
               <Collapse open={!dlServices.youtube}>
@@ -725,6 +733,8 @@ export default function Wizard({
       maxBitrate: parseInt(config.MAX_BITRATE) || 0,
       sizePreference: config.SIZE_PREFERENCE || "none",
       releasePreference: config.RELEASE_PREFERENCE || "fuller",
+      // Defaults to on, so only an explicit "false" turns it off.
+      preferOriginalRelease: config.PREFER_ORIGINAL_RELEASE !== "false",
       adminAuthMethod: config.ADMIN_AUTH_METHOD || "password",
       adminApiKey: config.ADMIN_API_KEY || "",
       adminSystemUsername: config.ADMIN_SYSTEM_USERNAME || "",
@@ -815,6 +825,7 @@ export default function Wizard({
         max_bitrate: fields.maxBitrate,
         size_preference: fields.sizePreference,
         release_preference: fields.releasePreference,
+        prefer_original_release: fields.preferOriginalRelease,
       });
       onComplete();
     } catch (e) {
