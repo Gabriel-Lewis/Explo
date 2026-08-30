@@ -44,11 +44,12 @@ WORKDIR /opt/explo/
 
 # Copy entrypoint, binary, python helper
 COPY ./docker/start.sh /start.sh
+COPY ./docker/explo-run.sh /explo-run.sh
 COPY --from=builder /app/explo .
 COPY src/downloader/youtube_music/search_ytmusic.py .
 
 
-RUN chmod +x /start.sh ./explo
+RUN chmod +x /start.sh /explo-run.sh ./explo
 
 
 ENV WEB_ADDR=":7288"
