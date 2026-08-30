@@ -119,18 +119,30 @@ func scoreDir(dir peerDir, track models.Track) int {
 		score += 50
 	}
 
-	// More tracks means a more complete release, but never let file count
-	// outweigh actually matching the album.
-	score += min(len(dir.files), 40)
+	score += fullerReleaseScore(dir)
 
 	return score
+}
+
+// fullerReleaseScore is the historic size term: more tracks means a more
+// complete release. Capped so that file count can never outweigh actually
+// matching the album.
+func fullerReleaseScore(dir peerDir) int {
+	return min(len(dir.files), maxReleaseSizeScore)
 }
 
 // scoreDirWithPreference adds the size preference to a release's score. Kept
 // separate so the matching terms above stay readable, and weighted well below
 // them: quality decides between equally good matches and never overrides one.
 func (c Slskd) scoreDirWithPreference(dir peerDir, track models.Track) int {
-	return scoreDir(dir, track) + scorePreference(dir.files, normalisePreference(c.Cfg.SizePreference))
+	score := scoreDir(dir, track) + scorePreference(dir.files, normalisePreference(c.Cfg.SizePreference))
+
+	// Swap the historic size term for the configured one. Both are capped the
+	// same way, so the balance against the name terms is unchanged.
+	score -= fullerReleaseScore(dir)
+	score += releaseSizeScore(dir, track, normaliseReleasePreference(c.Cfg.ReleasePreference))
+
+	return score
 }
 
 // qualityFiltered drops files failing the bitrate and bit-depth floors. Unlike

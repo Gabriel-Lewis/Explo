@@ -247,3 +247,169 @@ func TestNormalisePreference(t *testing.T) {
 		}
 	}
 }
+
+// releaseDir builds a candidate release of n files whose directory names both
+// the artist and the album, so only the size term varies between cases.
+func releaseDir(n int) peerDir {
+	dir := peerDir{dir: "Billie Eilish - When We All Fall Asleep"}
+	for i := 0; i < n; i++ {
+		dir.files = append(dir.files, File{
+			Name:      "track.mp3",
+			Extension: "mp3",
+			BitRate:   320,
+		})
+	}
+	return dir
+}
+
+func albumTrackOf(total, discs int) models.Track {
+	return models.Track{
+		CleanTitle: "Bad Guy",
+		MainArtist: "Billie Eilish",
+		Album:      "When We All Fall Asleep",
+		TrackTotal: total,
+		DiscTotal:  discs,
+	}
+}
+
+func TestReleaseSizeScore_PrefersTheRealAlbumLength(t *testing.T) {
+	track := albumTrackOf(11, 1)
+
+	exact := releaseSizeScore(releaseDir(11), track, PreferSmallerRelease)
+	deluxe := releaseSizeScore(releaseDir(21), track, PreferSmallerRelease)
+
+	if exact <= deluxe {
+		t.Errorf("11-track release scored %d against a 21-track deluxe %d; the deluxe would win",
+			exact, deluxe)
+	}
+	if exact != maxReleaseSizeScore {
+		t.Errorf("an exact match scored %d, want the full %d", exact, maxReleaseSizeScore)
+	}
+}
+
+// The hole this design exists to close: under a naive "fewest tracks wins",
+// a directory holding only the recommended track beats every real album and
+// album mode stops fetching albums.
+func TestReleaseSizeScore_ASingleFileLosesToTheRealAlbum(t *testing.T) {
+	track := albumTrackOf(12, 1)
+
+	lone := releaseSizeScore(releaseDir(1), track, PreferSmallerRelease)
+	album := releaseSizeScore(releaseDir(12), track, PreferSmallerRelease)
+
+	if lone >= album {
+		t.Errorf("a 1-file directory scored %d against the 12-track album %d; album mode would "+
+			"quietly stop downloading albums", lone, album)
+	}
+}
+
+// A real single is not a degenerate case: when the release genuinely has one
+// track, one file is the right answer.
+func TestReleaseSizeScore_ASingleFileWinsForARealSingle(t *testing.T) {
+	track := albumTrackOf(1, 1)
+
+	lone := releaseSizeScore(releaseDir(1), track, PreferSmallerRelease)
+	padded := releaseSizeScore(releaseDir(9), track, PreferSmallerRelease)
+
+	if lone <= padded {
+		t.Errorf("one file scored %d for a one-track single, against %d for nine", lone, padded)
+	}
+}
+
+func TestReleaseSizeScore_FallsBackWithoutACanonicalCount(t *testing.T) {
+	cases := map[string]models.Track{
+		// Enrichment is off or the MusicBrainz lookup failed.
+		"no track total": albumTrackOf(0, 1),
+		// TrackTotal counts the first medium only, so a two-disc release
+		// legitimately holds more files than it. Scoring closeness would
+		// punish the complete release for being complete.
+		"multi disc": albumTrackOf(11, 2),
+	}
+
+	for name, track := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := releaseDir(21)
+			got := releaseSizeScore(dir, track, PreferSmallerRelease)
+			want := fullerReleaseScore(dir)
+
+			if got != want {
+				t.Errorf("score = %d, want the fuller-release fallback %d", got, want)
+			}
+		})
+	}
+}
+
+// The default must leave release scoring exactly as it was.
+func TestReleaseSizeScore_FullerIsUnchanged(t *testing.T) {
+	track := albumTrackOf(11, 1)
+
+	for _, n := range []int{1, 11, 21, 60} {
+		dir := releaseDir(n)
+		if got, want := releaseSizeScore(dir, track, PreferFullerRelease), min(n, 40); got != want {
+			t.Errorf("fuller score for %d files = %d, want %d", n, got, want)
+		}
+	}
+}
+
+// The cap is what stops a right-sized wrong album beating a wrong-sized right
+// one. Without it the size term could outrank the album name.
+func TestReleaseSizeScore_NeverExceedsTheCap(t *testing.T) {
+	track := albumTrackOf(11, 1)
+
+	for _, n := range []int{0, 1, 11, 21, 200} {
+		if got := releaseSizeScore(releaseDir(n), track, PreferSmallerRelease); got > maxReleaseSizeScore {
+			t.Errorf("score for %d files = %d, above the cap of %d", n, got, maxReleaseSizeScore)
+		}
+	}
+}
+
+// End to end through the scorer the album flow actually calls.
+func TestScoreDirWithPreference_RightSizedWrongAlbumStillLoses(t *testing.T) {
+	track := albumTrackOf(11, 1)
+
+	client := prefClient(PreferNone)
+	client.Cfg.ReleasePreference = PreferSmallerRelease
+
+	right := releaseDir(21) // the deluxe, but the correct album
+
+	wrong := releaseDir(11) // exactly the right length, wrong album entirely
+	wrong.dir = "Some Other Compilation"
+
+	if client.scoreDirWithPreference(wrong, track) >= client.scoreDirWithPreference(right, track) {
+		t.Error("a right-sized wrong album beat a wrong-sized right album")
+	}
+}
+
+func TestScoreDirWithPreference_SmallerPicksTheStandardEdition(t *testing.T) {
+	track := albumTrackOf(11, 1)
+
+	client := prefClient(PreferNone)
+	client.Cfg.ReleasePreference = PreferSmallerRelease
+
+	standard := releaseDir(11)
+	deluxe := releaseDir(21)
+
+	if client.scoreDirWithPreference(standard, track) <= client.scoreDirWithPreference(deluxe, track) {
+		t.Error("the deluxe edition beat the standard album")
+	}
+
+	// And the default still does the opposite.
+	client.Cfg.ReleasePreference = PreferFullerRelease
+	if client.scoreDirWithPreference(deluxe, track) <= client.scoreDirWithPreference(standard, track) {
+		t.Error("with the default preference the fuller release did not win")
+	}
+}
+
+func TestNormaliseReleasePreference(t *testing.T) {
+	cases := map[string]string{
+		"smaller":  PreferSmallerRelease,
+		"SMALLER":  PreferSmallerRelease,
+		" fuller ": PreferFullerRelease,
+		"":         PreferFullerRelease,
+		"nonsense": PreferFullerRelease,
+	}
+	for in, want := range cases {
+		if got := normaliseReleasePreference(in); got != want {
+			t.Errorf("normaliseReleasePreference(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

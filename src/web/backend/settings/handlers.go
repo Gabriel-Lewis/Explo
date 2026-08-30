@@ -430,20 +430,21 @@ func (s *Settings) HandleWizardStep2(w http.ResponseWriter, r *http.Request) {
 // handleWizardStep3 saves downloader configuration.
 func (s *Settings) HandleWizardStep3(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		DownloadDir      string   `json:"download_dir"`
-		UseSubdirectory  bool     `json:"use_subdirectory"`
-		MigrateDownloads bool     `json:"migrate_downloads"`
-		DownloadServices []string `json:"download_services"`
-		YoutubeAPIKey    string   `json:"youtube_api_key"`
-		TrackExtension   string   `json:"track_extension"` // yt-dlp
-		FilterList       string   `json:"filter_list"`
-		SlskdURL         string   `json:"slskd_url"`
-		SlskdAPIKey      string   `json:"slskd_api_key"`
-		SlskdAlbumMode   bool     `json:"slskd_album_mode"`
-		Extensions       string   `json:"extensions"` // slskd
-		MinBitRate       int      `json:"min_bitrate"`
-		MaxBitRate       int      `json:"max_bitrate"`
-		SizePreference   string   `json:"size_preference"`
+		DownloadDir       string   `json:"download_dir"`
+		UseSubdirectory   bool     `json:"use_subdirectory"`
+		MigrateDownloads  bool     `json:"migrate_downloads"`
+		DownloadServices  []string `json:"download_services"`
+		YoutubeAPIKey     string   `json:"youtube_api_key"`
+		TrackExtension    string   `json:"track_extension"` // yt-dlp
+		FilterList        string   `json:"filter_list"`
+		SlskdURL          string   `json:"slskd_url"`
+		SlskdAPIKey       string   `json:"slskd_api_key"`
+		SlskdAlbumMode    bool     `json:"slskd_album_mode"`
+		Extensions        string   `json:"extensions"` // slskd
+		MinBitRate        int      `json:"min_bitrate"`
+		MaxBitRate        int      `json:"max_bitrate"`
+		SizePreference    string   `json:"size_preference"`
+		ReleasePreference string   `json:"release_preference"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -471,22 +472,26 @@ func (s *Settings) HandleWizardStep3(w http.ResponseWriter, r *http.Request) {
 	if body.SizePreference == "" {
 		body.SizePreference = "none"
 	}
+	if body.ReleasePreference == "" {
+		body.ReleasePreference = "fuller"
+	}
 	updates := map[string]string{
-		"DOWNLOAD_DIR":      body.DownloadDir,
-		"USE_SUBDIRECTORY":  useSubdir,
-		"MIGRATE_DOWNLOADS": migrateDL,
-		"DOWNLOAD_SERVICES": joined,
-		"YOUTUBE_API_KEY":   body.YoutubeAPIKey,
-		"TRACK_EXTENSION":   body.TrackExtension, // yt-dlp
-		"FILTER_LIST":       body.FilterList,
-		"SLSKD_URL":         body.SlskdURL,
-		"SLSKD_API_KEY":     body.SlskdAPIKey,
-		"SLSKD_ALBUM_MODE":  albumMode,
-		"EXTENSIONS":        body.Extensions, // slskd
-		"MIN_BITRATE":       strconv.Itoa(body.MinBitRate),
-		"MAX_BITRATE":       strconv.Itoa(body.MaxBitRate),
-		"SIZE_PREFERENCE":   body.SizePreference,
-		"WIZARD_COMPLETE":   "true",
+		"DOWNLOAD_DIR":       body.DownloadDir,
+		"USE_SUBDIRECTORY":   useSubdir,
+		"MIGRATE_DOWNLOADS":  migrateDL,
+		"DOWNLOAD_SERVICES":  joined,
+		"YOUTUBE_API_KEY":    body.YoutubeAPIKey,
+		"TRACK_EXTENSION":    body.TrackExtension, // yt-dlp
+		"FILTER_LIST":        body.FilterList,
+		"SLSKD_URL":          body.SlskdURL,
+		"SLSKD_API_KEY":      body.SlskdAPIKey,
+		"SLSKD_ALBUM_MODE":   albumMode,
+		"EXTENSIONS":         body.Extensions, // slskd
+		"MIN_BITRATE":        strconv.Itoa(body.MinBitRate),
+		"MAX_BITRATE":        strconv.Itoa(body.MaxBitRate),
+		"SIZE_PREFERENCE":    body.SizePreference,
+		"RELEASE_PREFERENCE": body.ReleasePreference,
+		"WIZARD_COMPLETE":    "true",
 	}
 
 	if err := s.UpdateEnvKeys(updates, web.SampleEnv); err != nil {
