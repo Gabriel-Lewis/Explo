@@ -347,3 +347,106 @@ func TestMoveAlbumSiblings_NoopWhenAlbumModeIsOff(t *testing.T) {
 func TestSlskdImplementsAlbumMigrator(t *testing.T) {
 	var _ albumMigrator = &Slskd{}
 }
+
+// The bug this guards: the recommended track is queued first and normally
+// finishes first, so the siblings are still transferring at the moment the
+// release is first migrated. They have to be picked up on a later pass instead
+// of being skipped once and abandoned.
+func TestMoveAlbumSiblings_PicksUpSiblingsThatFinishLater(t *testing.T) {
+	const (
+		peerDirectory = `@@x\Billie Eilish\When We All Fall Asleep`
+		early         = peerDirectory + `\01 Bury A Friend.flac`
+		late          = peerDirectory + `\03 Xanny.flac`
+	)
+
+	// The state the slow sibling reports, flipped between attempts.
+	lateState := "InProgress"
+
+	client := albumClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if _, err := w.Write([]byte(downloadsResponse(t, "peer1", map[string]string{
+			early: "Completed, Succeeded",
+			late:  lateState,
+		}))); err != nil {
+			t.Errorf("fake slskd failed to write response: %v", err)
+		}
+	})
+
+	srcDir := t.TempDir()
+	destDir := t.TempDir()
+	for _, name := range []string{"01 Bury A Friend.flac", "03 Xanny.flac"} {
+		if err := os.WriteFile(filepath.Join(srcDir, name), []byte(name), 0o644); err != nil {
+			t.Fatalf("seeding %s: %v", name, err)
+		}
+	}
+
+	track := albumTrack()
+	track.MainArtistID = "peer1"
+	track.AlbumFiles = []string{early, late}
+
+	if remaining := client.MoveAlbumSiblings(srcDir, destDir, &track, false); remaining != 1 {
+		t.Fatalf("first pass left %d files pending, want 1", remaining)
+	}
+	if _, err := os.Stat(filepath.Join(destDir, "03 Xanny.flac")); !os.IsNotExist(err) {
+		t.Fatal("the unfinished sibling was migrated on the first pass")
+	}
+
+	lateState = "Completed, Succeeded"
+
+	if remaining := client.MoveAlbumSiblings(srcDir, destDir, &track, false); remaining != 0 {
+		t.Errorf("second pass left %d files pending, want 0", remaining)
+	}
+	if _, err := os.Stat(filepath.Join(destDir, "03 Xanny.flac")); err != nil {
+		t.Errorf("the sibling that finished later was never migrated: %v", err)
+	}
+}
+
+// Already-migrated files must not be retried: the source is gone, so a second
+// attempt would fail forever and hold the release open until the deadline.
+func TestMoveAlbumSiblings_ForgetsMigratedFiles(t *testing.T) {
+	const done = `@@x\dir\01 Bury A Friend.flac`
+
+	client := albumClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if _, err := w.Write([]byte(downloadsResponse(t, "peer1", map[string]string{
+			done: "Completed, Succeeded",
+		}))); err != nil {
+			t.Errorf("fake slskd failed to write response: %v", err)
+		}
+	})
+
+	srcDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "01 Bury A Friend.flac"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("seeding sibling: %v", err)
+	}
+
+	track := albumTrack()
+	track.MainArtistID = "peer1"
+	track.AlbumFiles = []string{done}
+
+	client.MoveAlbumSiblings(srcDir, t.TempDir(), &track, false)
+
+	if len(track.AlbumFiles) != 0 {
+		t.Errorf("AlbumFiles still holds %v after migration", track.AlbumFiles)
+	}
+}
+
+// A sibling slskd has given up on must not keep the release open, or the
+// monitor waits out the full deadline for a file that is never coming.
+func TestMoveAlbumSiblings_DropsFailedSiblings(t *testing.T) {
+	const failed = `@@x\dir\03 Xanny.flac`
+
+	client := albumClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if _, err := w.Write([]byte(downloadsResponse(t, "peer1", map[string]string{
+			failed: "Completed, Errored",
+		}))); err != nil {
+			t.Errorf("fake slskd failed to write response: %v", err)
+		}
+	})
+
+	track := albumTrack()
+	track.MainArtistID = "peer1"
+	track.AlbumFiles = []string{failed}
+
+	if remaining := client.MoveAlbumSiblings(t.TempDir(), t.TempDir(), &track, false); remaining != 0 {
+		t.Errorf("a failed sibling left %d files pending, want 0", remaining)
+	}
+}

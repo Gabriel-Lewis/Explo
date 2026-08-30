@@ -277,42 +277,71 @@ func (c Slskd) siblingStates(username string) (map[string]string, error) {
 	return states, nil
 }
 
-// MoveAlbumSiblings migrates the rest of the release once the recommended
-// track has been moved. A sibling still transferring is left where it is: the
-// monitor finishes on the primary, and copying a partial file would put a
-// truncated track in the library.
+// MoveAlbumSiblings migrates whatever of the release has finished downloading
+// and reports how many files are still in flight, so callers can come back for
+// the rest. Doing this once was not enough: the recommended track is queued
+// first and so usually finishes first, which left most of the album skipped and
+// never looked at again.
+//
+// A sibling still transferring is left where it is -- copying a partial file
+// would put a truncated track in the library. Migrated files are dropped from
+// track.AlbumFiles, and so are ones slskd has given up on, which makes repeated
+// calls idempotent and lets the count reach zero.
 //
 // keepPermissions is passed in rather than read from the slskd config because
 // it is a download-wide setting owned by DownloadClient, which is also what
 // calls this.
-func (c Slskd) MoveAlbumSiblings(trackDir, destDir string, track *models.Track, keepPermissions bool) {
+func (c Slskd) MoveAlbumSiblings(trackDir, destDir string, track *models.Track, keepPermissions bool) int {
 	if !c.Cfg.AlbumMode || len(track.AlbumFiles) == 0 {
-		return
+		return 0
 	}
 
 	states, err := c.siblingStates(track.MainArtistID)
 	if err != nil {
-		slog.Warn("couldn't check release download states, leaving the rest of the album in place",
-			"context", err.Error())
-		return
+		// Nothing is dropped on a failed lookup: the files are still there and
+		// the next attempt can still find them.
+		slog.Warn("couldn't check release download states, will retry",
+			"album", track.Album, "context", err.Error())
+		return len(track.AlbumFiles)
 	}
 
-	var moved, pending int
+	var moved, failed int
+	pending := make([]string, 0, len(track.AlbumFiles))
+
 	for _, peerPath := range track.AlbumFiles {
-		if !strings.Contains(states[peerPath], "Succeeded") {
-			pending++
-			continue
-		}
-
+		state := states[peerPath]
 		name := path.Base(normalizePeerPath(peerPath))
-		if err := copyFile(filepath.Join(trackDir, name), filepath.Join(destDir, name), keepPermissions); err != nil {
-			slog.Warn("failed to move album track", "file", name, "context", err.Error())
-			continue
+
+		switch {
+		case strings.Contains(state, "Succeeded"):
+			if err := copyFile(filepath.Join(trackDir, name), filepath.Join(destDir, name), keepPermissions); err != nil {
+				// Keep it pending: slskd can report a transfer complete a moment
+				// before the file is readable.
+				slog.Debug("album track not ready to move yet", "file", name, "context", err.Error())
+				pending = append(pending, peerPath)
+				continue
+			}
+			moved++
+
+		case state == errorState:
+			// slskd has given up on this one, so waiting for it would only hold
+			// the release open until the deadline.
+			slog.Debug("album track failed to download, giving up on it", "file", name)
+			failed++
+
+		default:
+			pending = append(pending, peerPath)
 		}
-		moved++
 	}
 
-	slog.Info("migrated release", "album", track.Album, "moved", moved, "still downloading", pending)
+	track.AlbumFiles = pending
+
+	if moved > 0 || failed > 0 {
+		slog.Info("migrated release", "album", track.Album,
+			"moved", moved, "failed", failed, "still downloading", len(pending))
+	}
+
+	return len(pending)
 }
 
 // copyFile moves one finished album track into the library, mirroring how

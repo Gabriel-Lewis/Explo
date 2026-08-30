@@ -36,8 +36,12 @@ type Downloader interface {
 // albumMigrator is implemented by downloaders that fetch a whole release and
 // so have files to migrate beyond the one the monitor tracks. It is optional:
 // a downloader that only ever grabs a single file simply does not implement it.
+//
+// MoveAlbumSiblings returns how many files are still in flight. The monitor
+// calls it again while that is above zero, because the recommended track
+// normally finishes ahead of the rest of its release.
 type albumMigrator interface {
-	MoveAlbumSiblings(trackDir, destDir string, track *models.Track, keepPermissions bool)
+	MoveAlbumSiblings(trackDir, destDir string, track *models.Track, keepPermissions bool) int
 }
 
 // albumMigrators returns the registered downloaders that migrate whole
@@ -266,7 +270,11 @@ func buildTrackPath(template string, track *models.Track) string {
 	return filepath.Clean(result)
 }
 
-func (c *DownloadClient) MoveDownload(srcDir, destDir, trackPath string, track *models.Track) error {
+// MoveDownload moves the recommended track into the library and returns the
+// directory it landed in. Album siblings are migrated by the monitor rather
+// than here: they usually have not finished downloading yet, so they need
+// revisiting long after this returns.
+func (c *DownloadClient) MoveDownload(srcDir, destDir, trackPath string, track *models.Track) (string, error) {
 	trackDir := filepath.Join(srcDir, trackPath)
 	srcFile := filepath.Join(trackDir, track.File)
 
@@ -282,7 +290,7 @@ func (c *DownloadClient) MoveDownload(srcDir, destDir, trackPath string, track *
 
 	in, err := os.Open(srcFile)
 	if err != nil {
-		return fmt.Errorf("couldn't open source file: %s", err.Error())
+		return "", fmt.Errorf("couldn't open source file: %s", err.Error())
 	}
 
 	defer func() {
@@ -304,18 +312,18 @@ func (c *DownloadClient) MoveDownload(srcDir, destDir, trackPath string, track *
 		dstFile = filepath.Join(destDir, relativePath)
 	} else {
 		if err = os.MkdirAll(destDir, os.ModePerm); err != nil {
-			return fmt.Errorf("couldn't make download directory: %s", err.Error())
+			return "", fmt.Errorf("couldn't make download directory: %s", err.Error())
 		}
 
 		dstFile = filepath.Join(destDir, track.File)
 	}
 	if err = os.MkdirAll(filepath.Dir(dstFile), os.ModePerm); err != nil {
-		return fmt.Errorf("couldn't make destination directory: %s", err.Error())
+		return "", fmt.Errorf("couldn't make destination directory: %s", err.Error())
 	}
 
 	out, err := os.Create(dstFile)
 	if err != nil {
-		return fmt.Errorf("couldn't create destination file: %s", err.Error())
+		return "", fmt.Errorf("couldn't create destination file: %s", err.Error())
 	}
 
 	defer func() {
@@ -325,42 +333,48 @@ func (c *DownloadClient) MoveDownload(srcDir, destDir, trackPath string, track *
 	}()
 
 	if _, err = io.Copy(out, in); err != nil {
-		return fmt.Errorf("copy failed: %s", err.Error())
+		return "", fmt.Errorf("copy failed: %s", err.Error())
 	}
 
 	if err = out.Sync(); err != nil {
-		return fmt.Errorf("sync failed: %s", err.Error())
+		return "", fmt.Errorf("sync failed: %s", err.Error())
 	}
 
 	if c.Cfg.KeepPermissions {
 		info, err := os.Stat(srcFile)
 		if err != nil {
-			return fmt.Errorf("stat error: %s", err.Error())
+			return "", fmt.Errorf("stat error: %s", err.Error())
 		}
 		if err = os.Chmod(dstFile, info.Mode()); err != nil {
-			return fmt.Errorf("chmod failed: %s", err.Error())
+			return "", fmt.Errorf("chmod failed: %s", err.Error())
 		}
 	}
 
 	if err = os.Remove(srcFile); err != nil {
-		return fmt.Errorf("failed to delete original file: %s", err.Error())
+		return "", fmt.Errorf("failed to delete original file: %s", err.Error())
 	}
 
-	// Siblings move before the emptiness check below, so a directory still
-	// holding an unfinished album track is not removed out from under it.
-	for _, m := range c.albumMigrators() {
-		m.MoveAlbumSiblings(trackDir, filepath.Dir(dstFile), track, c.Cfg.KeepPermissions)
+	// A directory still holding album siblings is left alone; the monitor
+	// removes it once it has migrated the last of them.
+	if err = removeDirIfEmpty(trackDir); err != nil {
+		return "", err
 	}
 
-	isEmpty, err := isDirEmpty(trackDir)
+	return filepath.Dir(dstFile), nil
+}
+
+// removeDirIfEmpty cleans up a download directory once nothing is left in it.
+func removeDirIfEmpty(dir string) error {
+	isEmpty, err := isDirEmpty(dir)
 	if err != nil {
 		return fmt.Errorf("couldn't check if directory is empty: %s", err.Error())
-	} else if isEmpty {
-		if err = os.Remove(trackDir); err != nil {
-			return fmt.Errorf("failed to remove empty directory: %s", err.Error())
-		}
 	}
-
+	if !isEmpty {
+		return nil
+	}
+	if err = os.Remove(dir); err != nil {
+		return fmt.Errorf("failed to remove empty directory: %s", err.Error())
+	}
 	return nil
 }
 
