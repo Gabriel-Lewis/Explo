@@ -19,6 +19,8 @@ type Monitor interface {
 type MonitorConfig struct {
 	CheckInterval   time.Duration
 	MonitorDuration time.Duration
+	// MaxRuntime caps the whole monitoring pass. Zero means no cap.
+	MaxRuntime      time.Duration
 	MigrateDownload bool
 	FromDir         string
 	ToDir           string
@@ -63,7 +65,23 @@ func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) err
 	ticker := time.NewTicker(monCfg.CheckInterval)
 	defer ticker.Stop()
 
+	var deadline time.Time
+	if monCfg.MaxRuntime > 0 {
+		deadline = time.Now().Add(monCfg.MaxRuntime)
+	}
+
 	for range ticker.C {
+		// MonitorDuration only gives up on a download that has stopped moving.
+		// A transfer trickling in a few bytes per tick resets that clock every
+		// time, so without a cap on the pass as a whole one slow peer holds the
+		// entire playlist. Stop and build the playlist from whatever finished.
+		if !deadline.IsZero() && time.Now().After(deadline) {
+			slog.Warn("[monitor] hit the monitoring time limit, continuing without the rest",
+				"service", monCfg.Service, "limit", monCfg.MaxRuntime,
+				"downloaded files", successDownloads, "total tracks", len(tracks))
+			return nil
+		}
+
 		statuses, err := m.GetDownloadStatus(tracks)
 		if err != nil {
 			return fmt.Errorf("[%s/monitor] error fetching download status: %s", monCfg.Service, err.Error())

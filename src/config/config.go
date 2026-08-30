@@ -156,6 +156,10 @@ type Slskd struct {
 type SlskdMon struct {
 	Interval int `env:"SLSKD_MONITOR_INTERVAL" env-default:"1"`
 	Duration int `env:"SLSKD_MONITOR_DURATION" env-default:"15"`
+	// Hard cap on how long monitoring may run in total. SLSKD_MONITOR_DURATION
+	// only gives up on a download making no progress, so a slow but live
+	// transfer can hold the playlist open indefinitely. 0 disables the cap.
+	MaxRuntime int `env:"SLSKD_MONITOR_MAX_RUNTIME" env-default:"120"`
 }
 
 type DiscoveryConfig struct {
