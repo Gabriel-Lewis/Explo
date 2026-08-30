@@ -488,6 +488,7 @@ func (s *Settings) HandleWizardStep3(w http.ResponseWriter, r *http.Request) {
 		Extensions       string   `json:"extensions"` // slskd
 		MinBitRate       int      `json:"min_bitrate"`
 		MaxBitRate       int      `json:"max_bitrate"`
+		SizePreference   string   `json:"size_preference"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -511,6 +512,10 @@ func (s *Settings) HandleWizardStep3(w http.ResponseWriter, r *http.Request) {
 	if body.SlskdAlbumMode {
 		albumMode = "true"
 	}
+	// An empty value would blank the key rather than record the default.
+	if body.SizePreference == "" {
+		body.SizePreference = "none"
+	}
 	updates := map[string]string{
 		"DOWNLOAD_DIR":      body.DownloadDir,
 		"USE_SUBDIRECTORY":  useSubdir,
@@ -525,6 +530,7 @@ func (s *Settings) HandleWizardStep3(w http.ResponseWriter, r *http.Request) {
 		"EXTENSIONS":        body.Extensions, // slskd
 		"MIN_BITRATE":       strconv.Itoa(body.MinBitRate),
 		"MAX_BITRATE":       strconv.Itoa(body.MaxBitRate),
+		"SIZE_PREFERENCE":   body.SizePreference,
 		"WIZARD_COMPLETE":   "true",
 	}
 

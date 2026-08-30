@@ -331,25 +331,27 @@ func (c Slskd) CollectFiles(track models.Track, searchResults SearchResults) ([]
 func (c Slskd) filterFiles(files []File) ([]File, error) {
 	var filtered []File
 
-	for _, ext := range c.Cfg.Filters.Extensions {
-		for _, file := range files {
-			if file.Extension != ext {
-				continue
-			}
-
-			if !c.withinQualityRange(file) {
-				continue
-			}
-
-			filtered = append(filtered, file)
-			if len(filtered) >= c.Cfg.DownloadAttempts {
-				return filtered, nil
-			}
+	for _, file := range files {
+		if !slices.Contains(c.Cfg.Filters.Extensions, file.Extension) {
+			continue
 		}
+		if !c.withinQualityRange(file) {
+			continue
+		}
+		filtered = append(filtered, file)
 	}
 
 	if len(filtered) == 0 {
 		return nil, fmt.Errorf("no files found that match filters")
+	}
+
+	// Collect first and order afterwards. The old shape looped over the
+	// extensions outside the files, which made the extension list double as a
+	// preference; that is now only one of the orderings on offer.
+	c.sortByPreference(filtered)
+
+	if len(filtered) > c.Cfg.DownloadAttempts {
+		filtered = filtered[:c.Cfg.DownloadAttempts]
 	}
 	return filtered, nil
 }
