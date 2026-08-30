@@ -484,6 +484,7 @@ function Step3({ fields, setField, envSources, onBack, onFinish, saving }) {
     extensions,
     minBitrate,
     maxBitrate,
+    sizePreference,
   } = fields;
   const isLocked = (key) => envSources[key] === "env";
 
@@ -567,11 +568,13 @@ function Step3({ fields, setField, envSources, onBack, onFinish, saving }) {
                 extensions={extensions}
                 minBitrate={minBitrate}
                 maxBitrate={maxBitrate}
+                sizePreference={sizePreference}
                 isLocked={isLocked('EXTENSIONS')}
                 onChange={next => {
                   setField('extensions', next.extensions)
                   setField('minBitrate', next.minBitrate)
                   setField('maxBitrate', next.maxBitrate)
+                  setField('sizePreference', next.sizePreference)
                 }}
               />
               <ToggleRow
@@ -685,6 +688,7 @@ export default function Wizard({
       extensions: config.EXTENSIONS || "flac,mp3",
       minBitrate: parseInt(config.MIN_BITRATE) || 256,
       maxBitrate: parseInt(config.MAX_BITRATE) || 0,
+      sizePreference: config.SIZE_PREFERENCE || "none",
       adminAuthMethod: config.ADMIN_AUTH_METHOD || "password",
       adminApiKey: config.ADMIN_API_KEY || "",
       adminSystemUsername: config.ADMIN_SYSTEM_USERNAME || "",
@@ -773,6 +777,7 @@ export default function Wizard({
         extensions: fields.extensions,
         min_bitrate: fields.minBitrate,
         max_bitrate: fields.maxBitrate,
+        size_preference: fields.sizePreference,
       });
       onComplete();
     } catch (e) {

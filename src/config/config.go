@@ -148,6 +148,11 @@ type Slskd struct {
 	DownloadAttempts int    `env:"SLSKD_DL_ATTEMPTS" env-default:"3"` // Max number of files to attempt downloading per track
 	SlskdDir         string `env:"SLSKD_DIR" env-default:"/slskd/"`
 	MigrateDL        bool   `env:"MIGRATE_DOWNLOADS" env-default:"false"` // Move downloads from SlskdDir to DownloadDir
+	// Which end of the accepted quality range to reach for first: "none" leaves
+	// EXTENSIONS order deciding, as it always has; "smaller" takes the best
+	// lossy file and falls back to lossless only when there is none; "larger"
+	// is the reverse.
+	SizePreference   string `env:"SIZE_PREFERENCE" env-default:"none"`
 	// Download every track in the release the matched file sits in, rather
 	// than the single recommended track. Off by default: it multiplies how
 	// much is transferred per recommendation.
