@@ -479,6 +479,7 @@ function Step3({ fields, setField, envSources, onBack, onFinish, saving }) {
     filterList,
     slskdUrl,
     slskdApiKey,
+    slskdAlbumMode,
     extensions,
   } = fields;
   const isLocked = (key) => envSources[key] === "env";
@@ -564,6 +565,13 @@ function Step3({ fields, setField, envSources, onBack, onFinish, saving }) {
                 <input type="text" className={inputCls} value={extensions} onChange={e => setField('extensions', e.target.value)}
                   placeholder="flac,mp3" autoComplete="off" spellCheck={false} disabled={isLocked('EXTENSIONS')} />
               </TextField>
+              <ToggleRow
+                checked={slskdAlbumMode}
+                onChange={(v) => setField("slskdAlbumMode", v)}
+                disabled={isLocked("SLSKD_ALBUM_MODE")}
+                name="Download full albums"
+                desc="Fetch the whole release each recommendation belongs to. Only the recommended track is added to the playlist; the rest land in your library. Downloads much more per run."
+              />
               {/* Show keyword exclusion when YouTube isn't enabled — otherwise it lives in the YouTube section */}
               <Collapse open={!dlServices.youtube}>
                 <TextField label="Exclude keywords"
@@ -664,6 +672,7 @@ export default function Wizard({
       filterList: config.FILTER_LIST || "",
       slskdUrl: config.SLSKD_URL || "",
       slskdApiKey: config.SLSKD_API_KEY || "",
+      slskdAlbumMode: config.SLSKD_ALBUM_MODE === "true",
       extensions: config.EXTENSIONS || "",
       adminAuthMethod: config.ADMIN_AUTH_METHOD || "password",
       adminApiKey: config.ADMIN_API_KEY || "",
@@ -749,6 +758,7 @@ export default function Wizard({
         filter_list: fields.filterList,
         slskd_url: fields.slskdUrl,
         slskd_api_key: fields.slskdApiKey,
+        slskd_album_mode: fields.slskdAlbumMode,
         extensions: fields.extensions,
       });
       onComplete();

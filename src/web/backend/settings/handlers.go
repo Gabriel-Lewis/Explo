@@ -438,6 +438,7 @@ func (s *Settings) HandleWizardStep3(w http.ResponseWriter, r *http.Request) {
 		FilterList       string   `json:"filter_list"`
 		SlskdURL         string   `json:"slskd_url"`
 		SlskdAPIKey      string   `json:"slskd_api_key"`
+		SlskdAlbumMode   bool     `json:"slskd_album_mode"`
 		Extensions       string   `json:"extensions"` // slskd
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -458,6 +459,10 @@ func (s *Settings) HandleWizardStep3(w http.ResponseWriter, r *http.Request) {
 	if body.MigrateDownloads {
 		migrateDL = "true"
 	}
+	albumMode := "false"
+	if body.SlskdAlbumMode {
+		albumMode = "true"
+	}
 	updates := map[string]string{
 		"DOWNLOAD_DIR":      body.DownloadDir,
 		"USE_SUBDIRECTORY":  useSubdir,
@@ -468,6 +473,7 @@ func (s *Settings) HandleWizardStep3(w http.ResponseWriter, r *http.Request) {
 		"FILTER_LIST":       body.FilterList,
 		"SLSKD_URL":         body.SlskdURL,
 		"SLSKD_API_KEY":     body.SlskdAPIKey,
+		"SLSKD_ALBUM_MODE":  albumMode,
 		"EXTENSIONS":        body.Extensions, // slskd
 		"WIZARD_COMPLETE":   "true",
 	}
