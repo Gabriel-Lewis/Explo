@@ -63,6 +63,7 @@ func NewServer(cfg config.ServerConfig) *Server {
 		WebEnvPath: cfg.WebEnvPath,
 		WebDataDir: cfg.WebDataDir,
 		ExploPath: cfg.ExploPath,
+		RunTimeout: time.Duration(cfg.RunTimeout) * time.Minute,
 	}
 
 	settings := settings.NewSettings(webCfg)
