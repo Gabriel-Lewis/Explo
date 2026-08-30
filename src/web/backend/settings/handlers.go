@@ -128,7 +128,7 @@ func (s *Settings) HandleSaveSchedule(w http.ResponseWriter, r *http.Request) {
 		currentFlags = s.ParseEnvText(string(data))[envPrefix+"_FLAGS"]
 	}
 	mergeFlags := func(base string) string {
-		injected := []string{"--replace-playlist=false", "--clean-downloads"}
+		injected := []string{"--replace-playlist=false", "--clean-downloads", localOnlyFlag}
 		var extras []string
 		for _, f := range injected {
 			if strings.Contains(currentFlags, f) {
@@ -213,6 +213,58 @@ func (s *Settings) HandleSaveEnrichMetadata(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusOK)
 }
 
+// localOnlyFlag builds the playlist from tracks already in the library instead
+// of downloading. It is the same flag the docs suggest putting in *_FLAGS by
+// hand; the UI just writes it for you.
+const localOnlyFlag = "--download-mode=skip"
+
+// playlistFlagsKey resolves which env var holds a playlist's flags, and what
+// those flags are when the file says nothing, for built-in and custom
+// playlists alike.
+func playlistFlagsKey(id, name string) (flagsKey, defaultFlags string, err error) {
+	if def, ok := defs.PlaylistDefs[id]; ok {
+		return def.EnvPrefix + "_FLAGS", def.DefaultFlags, nil
+	}
+	if defs.CustomIDRe.MatchString(id) {
+		return util.CustomEnvPrefix(name) + "_FLAGS", "--playlist " + id, nil
+	}
+	return "", "", fmt.Errorf("unknown playlist name")
+}
+
+// setPlaylistFlag adds or removes one flag in a playlist's FLAGS env var,
+// leaving every other flag as it found it. Adding a flag that is already there
+// and removing one that is not are both no-ops, so a repeated request cannot
+// duplicate or mangle anything.
+func (s *Settings) setPlaylistFlag(id, name, flag string, enabled bool) error {
+	flagsKey, defaultFlags, err := playlistFlagsKey(id, name)
+	if err != nil {
+		return err
+	}
+
+	data, err := os.ReadFile(s.cfg.WebEnvPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	currentFlags := s.ParseEnvText(string(data))[flagsKey]
+	if currentFlags == "" {
+		currentFlags = defaultFlags
+	}
+
+	newFlags := currentFlags
+	switch hasFlag := strings.Contains(currentFlags, flag); {
+	case enabled && !hasFlag:
+		newFlags = strings.TrimSpace(currentFlags + " " + flag)
+	case !enabled && hasFlag:
+		newFlags = strings.TrimSpace(strings.ReplaceAll(currentFlags, flag, ""))
+		for strings.Contains(newFlags, "  ") {
+			newFlags = strings.ReplaceAll(newFlags, "  ", " ")
+		}
+	}
+
+	return s.UpdateEnvKeys(map[string]string{flagsKey: newFlags}, web.SampleEnv)
+}
+
 // HandleSaveReplacePlaylist injects or removes --replace-playlist=false from a playlist's FLAGS env var.
 func (s *Settings) HandleSaveReplacePlaylist(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -225,49 +277,42 @@ func (s *Settings) HandleSaveReplacePlaylist(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	var envPrefix string
-	var defaultFlags string
-	if def, ok := defs.PlaylistDefs[body.ID]; ok {
-		envPrefix = def.EnvPrefix
-		defaultFlags = def.DefaultFlags
-	} else if defs.CustomIDRe.MatchString(body.ID) {
-		envPrefix = util.CustomEnvPrefix(body.Name)
-		defaultFlags = "--playlist " + body.ID
-	} else {
-		http.Error(w, "unknown playlist name", http.StatusBadRequest)
-		return
-	}
-
-	flagsKey := envPrefix + "_FLAGS"
-	const replaceFlag = "--replace-playlist=false"
-
-	data, err := os.ReadFile(s.cfg.WebEnvPath)
-	if err != nil && !os.IsNotExist(err) {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	current := s.ParseEnvText(string(data))
-	currentFlags := current[flagsKey]
-	if currentFlags == "" {
-		currentFlags = defaultFlags
-	}
-
-	hasFlag := strings.Contains(currentFlags, replaceFlag)
-	newFlags := currentFlags
-	if !body.Replace && !hasFlag {
-		newFlags = strings.TrimSpace(currentFlags + " " + replaceFlag)
-	} else if body.Replace && hasFlag {
-		newFlags = strings.TrimSpace(strings.ReplaceAll(currentFlags, replaceFlag, ""))
-		for strings.Contains(newFlags, "  ") {
-			newFlags = strings.ReplaceAll(newFlags, "  ", " ")
-		}
-	}
-
-	if err := s.UpdateEnvKeys(map[string]string{flagsKey: newFlags}, web.SampleEnv); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	// The flag is the negative: present means "do not replace".
+	if err := s.setPlaylistFlag(body.ID, body.Name, "--replace-playlist=false", !body.Replace); err != nil {
+		http.Error(w, err.Error(), statusFor(err))
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// HandleSaveLocalOnly injects or removes --download-mode=skip from one
+// playlist's FLAGS env var, so a playlist can be built from the library alone
+// while the others keep downloading.
+func (s *Settings) HandleSaveLocalOnly(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		LocalOnly bool   `json:"local_only"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := s.setPlaylistFlag(body.ID, body.Name, localOnlyFlag, body.LocalOnly); err != nil {
+		http.Error(w, err.Error(), statusFor(err))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// statusFor keeps an unrecognised playlist a client error while anything else
+// stays a server error.
+func statusFor(err error) int {
+	if err != nil && err.Error() == "unknown playlist name" {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }
 
 // HandleSaveCleanDownloads injects or removes --clean-downloads from every playlist's FLAGS env var.

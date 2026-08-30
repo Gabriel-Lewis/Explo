@@ -15,7 +15,8 @@ import {
   fetchConfig, fetchConfigRaw, saveConfig, resetConfig,
   saveSchedule, startRun, stopRun, fetchRunStatus, fetchLogs,
   fetchCustomPlaylists, deleteCustomPlaylist, savePathTemplate, saveEnrichMetadata,
-  saveReplacePlaylist, saveCleanDownloads,
+  saveReplacePlaylist,
+  saveLocalOnly, saveCleanDownloads,
   fetchPathTemplatePresets, addPathTemplatePreset, deletePathTemplatePreset,
 } from '../lib/api'
 import { parseSlogLine, cronToFields, highlightEnv } from '../lib/utils'
@@ -203,6 +204,7 @@ function CustomPlaylistsSection({
 function HomeSection() {
   const [schedules, setSchedules] = useState(null)
   const [replacePlaylists, setReplacePlaylists] = useState({})
+  const [localOnlyPlaylists, setLocalOnlyPlaylists] = useState({})
   const [scheduleSaveStatus, setScheduleSaveStatus] = useState({})
   const [lbUser, setLbUser] = useState('')
   const [openTracklist, setOpenTracklist] = useState(null)
@@ -229,10 +231,14 @@ function HomeSection() {
       setCustomPlaylists(customList)
 
       const rp = {}
+      const lo = {}
       for (const p of PLAYLISTS) {
-        rp[p.value] = !(values[p.flagsKey] || '').includes('--replace-playlist=false')
+        const flags = values[p.flagsKey] || ''
+        rp[p.value] = !flags.includes('--replace-playlist=false')
+        lo[p.value] = flags.includes('--download-mode=skip')
       }
       setReplacePlaylists(rp)
+      setLocalOnlyPlaylists(lo)
 
       const s = {}
       for (const p of PLAYLISTS) {
@@ -322,6 +328,14 @@ function HomeSection() {
         setReplacePlaylists(prev => ({ ...prev, [id]: next }))
         saveReplacePlaylist(id, s.name, next).catch(() =>
           setReplacePlaylists(prev => ({ ...prev, [id]: !next }))
+        )
+      },
+      localOnly: localOnlyPlaylists[id] ?? false,
+      onLocalOnlyToggle: () => {
+        const next = !(localOnlyPlaylists[id] ?? false)
+        setLocalOnlyPlaylists(prev => ({ ...prev, [id]: next }))
+        saveLocalOnly(id, s.name, next).catch(() =>
+          setLocalOnlyPlaylists(prev => ({ ...prev, [id]: !next }))
         )
       },
       onDayChange: day => setSchedules(prev => ({
