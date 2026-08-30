@@ -5,6 +5,7 @@ import (
 	"explo/src/models"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -34,10 +35,26 @@ type FileStatus struct {
 	PercentComplete  float64   `json:"percentComplete"`
 }
 
+// pendingAlbum is a release whose recommended track has already been migrated
+// but whose remaining files are still downloading. The monitor revisits these
+// each tick, because the recommended track is queued first and so normally
+// finishes well ahead of its siblings.
+type pendingAlbum struct {
+	track    *models.Track
+	trackDir string
+	destDir  string
+	// remaining is the count the migrator last reported. Progress is measured
+	// against this rather than against the migrator's own bookkeeping, so the
+	// deadline depends only on what the interface returns.
+	remaining  int
+	lastChange time.Time
+}
+
 func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) error {
 	var successDownloads int
 
 	progressMap := make(map[string]*DownloadMonitor)
+	pendingAlbums := make(map[string]*pendingAlbum)
 	monCfg, err := m.GetConf()
 	if err != nil {
 		return err
@@ -89,10 +106,17 @@ func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) err
 				var path string
 				track.File, path = parsePath(track.File)
 				if monCfg.MigrateDownload {
-					if err = c.MoveDownload(monCfg.FromDir, monCfg.ToDir, path, track); err != nil {
+					destDir, err := c.MoveDownload(monCfg.FromDir, monCfg.ToDir, path, track)
+					if err != nil {
 						slog.Error("error while moving file", "err", err.Error())
 					} else {
 						slog.Info("track moved successfully", "service", monCfg.Service)
+						c.trackAlbum(pendingAlbums, key, &pendingAlbum{
+							track:      track,
+							trackDir:   filepath.Join(monCfg.FromDir, path),
+							destDir:    destDir,
+							lastChange: currentTime,
+						}, monCfg)
 					}
 				}
 				delete(progressMap, key)
@@ -117,8 +141,11 @@ func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) err
 				continue
 			}
 		}
-			// Exit condition: all tracks have been processed or skipped
-		if tracksProcessed(tracks, progressMap) {
+		c.migratePendingAlbums(pendingAlbums, monCfg, time.Now().Local())
+
+			// Exit condition: all tracks have been processed or skipped, and
+			// every release has finished being migrated
+		if tracksProcessed(tracks, progressMap) && len(pendingAlbums) == 0 {
 			slog.Info("[monitor] Finished", "service", monCfg.Service, "downloaded files", successDownloads, "total tracks", len(tracks))
 			return nil
 		}
@@ -137,4 +164,56 @@ func tracksProcessed(tracks []*models.Track, progressMap map[string]*DownloadMon
 		}
 	}
 	return true
+}
+// trackAlbum records a release for later migration, migrating whatever has
+// already finished. Releases with nothing left over are never recorded, so a
+// single-track download costs nothing.
+func (c *DownloadClient) trackAlbum(pending map[string]*pendingAlbum, key string, album *pendingAlbum, monCfg MonitorConfig) {
+	if remaining := c.migrateAlbum(album); remaining > 0 {
+		album.remaining = remaining
+		pending[key] = album
+		slog.Info("[monitor] waiting for the rest of the release", "service", monCfg.Service,
+			"album", album.track.Album, "files", remaining)
+	}
+}
+
+// migrateAlbum moves whatever of one release has finished, returning how many
+// of its files are still in flight.
+func (c *DownloadClient) migrateAlbum(album *pendingAlbum) int {
+	var remaining int
+	for _, m := range c.albumMigrators() {
+		remaining += m.MoveAlbumSiblings(album.trackDir, album.destDir, album.track, c.Cfg.KeepPermissions)
+	}
+	return remaining
+}
+
+// migratePendingAlbums revisits every release still waiting on files. A release
+// that stops making progress is abandoned on the same deadline a stalled track
+// is, so the monitor cannot be held open by a peer that has gone away.
+func (c *DownloadClient) migratePendingAlbums(pending map[string]*pendingAlbum, monCfg MonitorConfig, now time.Time) {
+	for key, album := range pending {
+		before := album.remaining
+		remaining := c.migrateAlbum(album)
+		album.remaining = remaining
+
+		if remaining == 0 {
+			delete(pending, key)
+			if err := removeDirIfEmpty(album.trackDir); err != nil {
+				slog.Debug("couldn't clean up release directory", "context", err.Error())
+			}
+			slog.Info("[monitor] release fully migrated", "service", monCfg.Service, "album", album.track.Album)
+			continue
+		}
+
+		if remaining < before {
+			album.lastChange = now
+			continue
+		}
+
+		if now.Sub(album.lastChange) > monCfg.MonitorDuration {
+			delete(pending, key)
+			slog.Warn("[monitor] giving up on the rest of the release", "service", monCfg.Service,
+				"album", album.track.Album, "files left in place", remaining)
+		}
+	}
 }

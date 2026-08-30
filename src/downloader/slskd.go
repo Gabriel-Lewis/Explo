@@ -480,6 +480,11 @@ func wildcardArtist(artist string) string {
 }
 
 // different failure states slskd has (format is "Completed,Rejected", "Errored,Cancelled" etc..)
+// errorState is the single state normalize collapses every slskd failure into.
+// Shared so that code reacting to a failed transfer cannot drift from the code
+// that labels one.
+const errorState = "Errored"
+
 var failureStates = map[string]struct{} {
 	"Aborted": {},
 	"TimedOut": {},
@@ -496,7 +501,7 @@ func normalize(state string) string{
 		p = strings.TrimSpace(p)
 		if _, ok := failureStates[p]; ok {
 			slog.Debug("[slskd] download failed", "status", state)
-			return "Errored"
+			return errorState
 		}
 	}
 	return state
