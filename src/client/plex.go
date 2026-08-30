@@ -548,6 +548,14 @@ func (c *Plex) UpdatePlaylist() error {
 }
 
 func (c *Plex) DeletePlaylist() error {
+	// Without an ID this would DELETE the /playlists collection itself. Plex
+	// answers 403, but a delete aimed at every playlist is not a request worth
+	// making and finding nothing to delete is not a failure.
+	if c.Cfg.PlaylistID == "" {
+		slog.Debug("no plex playlist to delete", "playlist", c.Cfg.PlaylistName)
+		return nil
+	}
+
 	params := fmt.Sprintf("/playlists/%s", c.Cfg.PlaylistID)
 
 	if _, err := c.HttpClient.MakeRequest("DELETE", c.Cfg.URL+params, nil, c.Cfg.Creds.Headers); err != nil {

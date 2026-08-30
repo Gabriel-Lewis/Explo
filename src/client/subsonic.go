@@ -294,6 +294,11 @@ func (c *Subsonic) UpdatePlaylist() error {
 }
 
 func (c *Subsonic) DeletePlaylist() error {
+	if c.Cfg.PlaylistID == "" {
+		slog.Debug("no subsonic playlist to delete", "playlist", c.Cfg.PlaylistName)
+		return nil
+	}
+
 	reqParam := fmt.Sprintf("deletePlaylist?id=%s&f=json", c.Cfg.PlaylistID)
 
 	if _, err := c.subsonicRequest(reqParam); err != nil {

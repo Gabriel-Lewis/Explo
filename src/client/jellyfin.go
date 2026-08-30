@@ -278,6 +278,13 @@ func (c *Jellyfin) UpdatePlaylist() error {
 }
 
 func (c *Jellyfin) DeletePlaylist() error {
+	// Without an ID this would DELETE /Items, which is every item rather than
+	// one playlist.
+	if c.Cfg.PlaylistID == "" {
+		slog.Debug("no jellyfin playlist to delete", "playlist", c.Cfg.PlaylistName)
+		return nil
+	}
+
 	queryParams := fmt.Sprintf("/Items/%s", c.Cfg.PlaylistID)
 
 	if _, err := c.HttpClient.MakeRequest("DELETE", c.Cfg.URL+queryParams, nil, c.Cfg.Creds.Headers); err != nil {

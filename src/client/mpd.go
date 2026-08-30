@@ -100,7 +100,10 @@ func (c *MPD) DeletePlaylist() error {
 		}
 		return nil
 	}
-	return fmt.Errorf("playlist not found")
+	// Nothing to delete is not a failure; the caller would only log a warning
+	// about a playlist that was never there.
+	slog.Debug("no mpd playlist to delete", "playlist", c.Cfg.PlaylistName)
+	return nil
 }
 
 func (c MPD) findTrack(name, path string) (string, error) {
