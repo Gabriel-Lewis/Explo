@@ -28,6 +28,9 @@ func (p *pollStub) QueryTrack(*models.Track) error { return nil }
 func (p *pollStub) GetTrack(*models.Track) error   { return nil }
 func (p *pollStub) GetConf() (MonitorConfig, error) { return p.cfg, nil }
 func (p *pollStub) Cleanup(models.Track, string) error { return nil }
+func (p *pollStub) MoveDownload(string, string, string, *models.Track) (string, error) {
+	return "", nil
+}
 
 func (p *pollStub) GetDownloadStatus(tracks []*models.Track) (map[string]FileStatus, error) {
 	result := p.results[min(p.polls, len(p.results)-1)]
@@ -40,10 +43,10 @@ func (p *pollStub) GetDownloadStatus(tracks []*models.Track) (map[string]FileSta
 	statuses := make(map[string]FileStatus, len(tracks))
 	for _, track := range tracks {
 		if result.complete {
-			statuses[track.File] = FileStatus{ID: "1", State: "Completed, Succeeded", PercentComplete: 100}
+			statuses[track.ID] = FileStatus{ID: "1", Filename: track.File, State: "Completed, Succeeded", PercentComplete: 100}
 			continue
 		}
-		statuses[track.File] = FileStatus{ID: "1", State: "InProgress", BytesTransferred: p.polls, BytesRemaining: 100}
+		statuses[track.ID] = FileStatus{ID: "1", Filename: track.File, State: "InProgress", BytesTransferred: p.polls, BytesRemaining: 100}
 	}
 	return statuses, nil
 }
@@ -68,7 +71,8 @@ func runMonitor(t *testing.T, stub *pollStub, track *models.Track) error {
 func monitorCfg() MonitorConfig {
 	return MonitorConfig{
 		CheckInterval:   time.Millisecond,
-		MonitorDuration: time.Hour,
+		StallDuration:   time.Hour,
+		MaxDuration:     24 * time.Hour,
 		Service:         "slskd",
 	}
 }

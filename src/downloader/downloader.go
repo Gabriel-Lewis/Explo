@@ -41,7 +41,7 @@ type Downloader interface {
 // calls it again while that is above zero, because the recommended track
 // normally finishes ahead of the rest of its release.
 type albumMigrator interface {
-	MoveAlbumSiblings(trackDir, destDir string, track *models.Track, keepPermissions bool) int
+	MoveAlbumSiblings(trackDir, destDir string, track *models.Track) int
 }
 
 // albumMigrators returns the registered downloaders that migrate whole
@@ -68,6 +68,13 @@ func NewDownloader(cfg *cfg.DownloadConfig, httpClient *util.HttpClient, filterL
 			slskdClient := NewSlskd(cfg.Slskd, cfg.DownloadDir)
 			slskdClient.AddHeader()
 			downloader = append(downloader, slskdClient)
+		case "lidarr":
+			lidarrClient := NewLidarr(cfg.Lidarr, cfg.DownloadDir)
+			lidarrClient.AddHeader()
+			if err := lidarrClient.getRootDirectory(); err != nil {
+				return nil, err
+			}
+			downloader = append(downloader, lidarrClient)
 		default:
 			return nil, fmt.Errorf("downloader '%s' not supported", service)
 		}
@@ -147,6 +154,9 @@ func (c *DownloadClient) needsDownloadDir() bool {
 		if svc == "youtube" || svc == "youtube-music" {
 			return true
 		}
+	}
+	if c.Cfg.Lidarr.MigrateDL {
+		return c.Cfg.Lidarr.MigrateDL
 	}
 	return c.Cfg.Slskd.MigrateDL
 }
@@ -229,22 +239,31 @@ func containsLower(str string, substr string) bool {
 }
 
 func sanitize(s string) string {
-	replacer := strings.NewReplacer(
-		"/", "-",
-		"\\", "-",
-		":", "-",
-		"*", "",
-		"?", "",
-		"\"", "",
-		"<", "",
-		">", "",
-		"|", "",
-	)
+	s = strings.TrimSpace(s)
 
-	return strings.TrimSpace(replacer.Replace(s))
+    replacer := strings.NewReplacer(
+        "/", "-",
+        "\\", "-",
+        ":", "-",
+        "*", "",
+        "?", "",
+        "\"", "",
+        "<", "",
+        ">", "",
+        "|", "",
+    )
+
+    s = replacer.Replace(s)
+
+    switch s {
+    case ".", "..", ". .", "":
+        return "_"
+    }
+
+    return s
 }
 
-func buildTrackPath(template string, track *models.Track) string {
+func buildTrackPath(template string, track *models.Track) (string, error) {
 	replacements := map[string]string{
 		"Artist":		sanitize(track.MainArtist),
 		"Album":		sanitize(track.Album),
@@ -266,116 +285,21 @@ func buildTrackPath(template string, track *models.Track) string {
 			value,
 		)
 	}
+	cleanPath := filepath.Clean(result)
 
-	return filepath.Clean(result)
-}
+	if !filepath.IsLocal(cleanPath) {
+        return "", fmt.Errorf("path template resolves to a non-local path: %s", cleanPath)
+    }
 
-// MoveDownload moves the recommended track into the library and returns the
-// directory it landed in. Album siblings are migrated by the monitor rather
-// than here: they usually have not finished downloading yet, so they need
-// revisiting long after this returns.
-func (c *DownloadClient) MoveDownload(srcDir, destDir, trackPath string, track *models.Track) (string, error) {
-	trackDir := filepath.Join(srcDir, trackPath)
-	srcFile := filepath.Join(trackDir, track.File)
-
-	if c.Cfg.RenameTrack { // Rename file to {title}-{artist} format
-		track.File = getFilename(track.CleanTitle, track.MainArtist) + filepath.Ext(track.File)
-	}
-	if c.Cfg.OverwriteMetadata {
-		metadata := util.BuildffmpegMetadata(*track)
-		if err := overwriteMetadata(metadata, srcFile); err != nil {
-			slog.Warn("problem overwriting metadata", "msg", err.Error())
-		}
+	file := filepath.Base(cleanPath)
+	if ext := filepath.Ext(file); ext == "" {
+		slog.Warn("path template does not have file extension ( {{ext}} ) appended, adding it automatically")
+		file += filepath.Ext(track.File)
+		cleanPath = filepath.Join(filepath.Dir(cleanPath), file)
 	}
 
-	in, err := os.Open(srcFile)
-	if err != nil {
-		return "", fmt.Errorf("couldn't open source file: %s", err.Error())
-	}
-
-	defer func() {
-		if cerr := in.Close(); cerr != nil {
-			slog.Error(fmt.Sprintf("failed to close source file: %s", cerr.Error()))
-		}
-	}()
-
-	var dstFile string
-	
-	if c.Cfg.PathTemplate != "" {
-		relativePath := buildTrackPath(c.Cfg.PathTemplate, track)
-		track.File = filepath.Base(relativePath)
-		if track.File == "." || track.File == string(filepath.Separator) {
-			track.File = getFilename(track.CleanTitle, track.MainArtist) + filepath.Ext(track.File)
-			relativePath = filepath.Dir(relativePath) + string(filepath.Separator) + track.File
-			slog.Warn(fmt.Sprintf("invalid path template result for track '%s' by '%s', using filename '%s' instead", track.Title, track.Artist, track.File))
-		}
-		dstFile = filepath.Join(destDir, relativePath)
-	} else {
-		if err = os.MkdirAll(destDir, os.ModePerm); err != nil {
-			return "", fmt.Errorf("couldn't make download directory: %s", err.Error())
-		}
-
-		dstFile = filepath.Join(destDir, track.File)
-	}
-	if err = os.MkdirAll(filepath.Dir(dstFile), os.ModePerm); err != nil {
-		return "", fmt.Errorf("couldn't make destination directory: %s", err.Error())
-	}
-
-	out, err := os.Create(dstFile)
-	if err != nil {
-		return "", fmt.Errorf("couldn't create destination file: %s", err.Error())
-	}
-
-	defer func() {
-		if cerr := out.Close(); cerr != nil {
-			slog.Error(fmt.Sprintf("failed to close destination file: %s", cerr.Error()))
-		}
-	}()
-
-	if _, err = io.Copy(out, in); err != nil {
-		return "", fmt.Errorf("copy failed: %s", err.Error())
-	}
-
-	if err = out.Sync(); err != nil {
-		return "", fmt.Errorf("sync failed: %s", err.Error())
-	}
-
-	if c.Cfg.KeepPermissions {
-		info, err := os.Stat(srcFile)
-		if err != nil {
-			return "", fmt.Errorf("stat error: %s", err.Error())
-		}
-		if err = os.Chmod(dstFile, info.Mode()); err != nil {
-			return "", fmt.Errorf("chmod failed: %s", err.Error())
-		}
-	}
-
-	if err = os.Remove(srcFile); err != nil {
-		return "", fmt.Errorf("failed to delete original file: %s", err.Error())
-	}
-
-	// A directory still holding album siblings is left alone; the monitor
-	// removes it once it has migrated the last of them.
-	if err = removeDirIfEmpty(trackDir); err != nil {
-		return "", err
-	}
-
-	return filepath.Dir(dstFile), nil
-}
-
-// removeDirIfEmpty cleans up a download directory once nothing is left in it.
-func removeDirIfEmpty(dir string) error {
-	isEmpty, err := isDirEmpty(dir)
-	if err != nil {
-		return fmt.Errorf("couldn't check if directory is empty: %s", err.Error())
-	}
-	if !isEmpty {
-		return nil
-	}
-	if err = os.Remove(dir); err != nil {
-		return fmt.Errorf("failed to remove empty directory: %s", err.Error())
-	}
-	return nil
+	track.File = file
+	return cleanPath, nil
 }
 
 func overwriteMetadata(metadata []string, srcFile string) error {
@@ -403,6 +327,111 @@ func overwriteMetadata(metadata []string, srcFile string) error {
 func tempAudioFile(path string) string {
     ext := filepath.Ext(path)
     return strings.TrimSuffix(path, ext) + ".tmp" + ext
+}
+
+
+// moveTrack moves srcFile into the library and returns the directory it landed
+// in. The source directory is removed only once it is empty, so album siblings
+// still downloading next to it are left alone.
+func moveTrack(srcFile, destDir string, track *models.Track, pathTemplate string, keepPerms bool) (string, error) {
+	var dstFile string
+    if pathTemplate != "" {
+        relativePath, err := buildTrackPath(pathTemplate, track)
+		if err != nil {
+			return "", err
+		}
+
+        if track.File == "." || track.File == string(filepath.Separator) {
+            track.File = getFilename(track.CleanTitle, track.MainArtist) + filepath.Ext(srcFile)
+            relativePath = filepath.Join(filepath.Dir(relativePath), track.File)
+            slog.Warn("invalid path template result",
+                "track", track.Title,
+                "artist", track.Artist,
+                "filename", track.File)
+        }
+
+        dstFile = filepath.Join(destDir, relativePath)
+    } else {
+        if err := os.MkdirAll(destDir, os.ModePerm); err != nil {
+            return "", err
+        }
+        dstFile = filepath.Join(destDir, track.File)
+    }
+
+    if err := moveFile(srcFile, dstFile, keepPerms); err != nil {
+        return "", err
+    }
+
+    if err := removeDirIfEmpty(filepath.Dir(srcFile)); err != nil {
+        return "", err
+    }
+
+    return filepath.Dir(dstFile), nil
+}
+
+// removeDirIfEmpty cleans up a download directory once nothing is left in it.
+func removeDirIfEmpty(dir string) error {
+	isEmpty, err := isDirEmpty(dir)
+	if err != nil {
+		return fmt.Errorf("couldn't check if directory is empty: %s", err.Error())
+	}
+	if !isEmpty {
+		return nil
+	}
+	if err = os.Remove(dir); err != nil {
+		return fmt.Errorf("failed to remove empty directory: %s", err.Error())
+	}
+	return nil
+}
+
+func moveFile(srcFile, dstFile string, keepPermissions bool) error {
+    in, err := os.Open(srcFile)
+    if err != nil {
+        return fmt.Errorf("couldn't open source file: %w", err)
+    }
+    defer func() {
+    	if err := in.Close(); err != nil {
+        	slog.Warn("failed to close source file", "err", err)
+    	}
+	}()
+	if err := os.MkdirAll(filepath.Dir(dstFile), 0755); err != nil {
+		return fmt.Errorf("couldn't create directory for file: %w", err)
+	}
+    out, err := os.Create(dstFile)
+    if err != nil {
+        return fmt.Errorf("couldn't create destination file: %w", err)
+    }
+
+    if _, err := io.Copy(out, in); err != nil {
+        if closeErr := out.Close(); closeErr != nil {
+        	slog.Warn("failed to close destination file", "err", closeErr)
+    	}
+        return fmt.Errorf("copy failed: %w", err)
+    }
+
+    if err := out.Sync(); err != nil {
+        if closeErr := out.Close(); closeErr != nil {
+        	slog.Warn("failed to close destination file", "err", closeErr)
+    	}
+        return fmt.Errorf("sync failed: %w", err)
+    }
+
+    if err := out.Close(); err != nil {
+        return fmt.Errorf("failed to close destination file: %w", err)
+    }
+
+    if keepPermissions {
+        info, err := os.Stat(srcFile)
+        if err != nil {
+            return fmt.Errorf("stat error: %w", err)
+        }
+
+        if err := os.Chmod(dstFile, info.Mode()); err != nil {
+            return fmt.Errorf("chmod failed: %w", err)
+        }
+    }
+
+    return os.Remove(srcFile)
 }
 
 func isDirEmpty(path string) (bool, error) {

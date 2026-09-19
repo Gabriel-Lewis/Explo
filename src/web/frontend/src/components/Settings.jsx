@@ -151,7 +151,7 @@ function CustomPlaylistsSection({
 
       {customPlaylists.length === 0 ? (
         <p className="text-[12px] text-muted mt-3">
-          No custom playlists yet. Import one from ListenBrainz or Apple Music.
+          No custom playlists yet. Import one from ListenBrainz, Apple Music or Spotify.
         </p>
       ) : (
         <div className="grid grid-cols-1 min-[420px]:grid-cols-2 min-[720px]:grid-cols-4 gap-3 mt-3">
@@ -398,7 +398,7 @@ function HomeSection() {
             playlist={openTracklist}
             refreshTick={refreshTick}
             onRun={async () => {
-              await startRun(openTracklist, 'normal')
+              await startRun(openTracklist, 'normal', replacePlaylists[playlist] ?? true)
               setRunning(true)
               setStatus('running…')
               setLogEntries([])

@@ -18,12 +18,16 @@ const maxPollFailures = 3
 type Monitor interface {
 	GetDownloadStatus([]*models.Track) (map[string]FileStatus, error)
 	GetConf() (MonitorConfig, error)
+	// MoveDownload migrates a finished track into the library and returns the
+	// directory it landed in, so album siblings can follow it there.
+	MoveDownload(string, string, string, *models.Track) (string, error)
 	Cleanup(models.Track, string) error
 }
 
 type MonitorConfig struct {
 	CheckInterval   time.Duration
-	MonitorDuration time.Duration
+	StallDuration time.Duration
+	MaxDuration time.Duration
 	MigrateDownload bool
 	FromDir         string
 	ToDir           string
@@ -38,6 +42,7 @@ type FileStatus struct {
 	BytesTransferred int       `json:"bytesTransferred"`
 	BytesRemaining   int       `json:"bytesRemaining"`
 	PercentComplete  float64   `json:"percentComplete"`
+	QueueID 		 string    `json:"queueID"`
 }
 
 // pendingAlbum is a release whose recommended track has already been migrated
@@ -52,6 +57,7 @@ type pendingAlbum struct {
 	// against this rather than against the migrator's own bookkeeping, so the
 	// deadline depends only on what the interface returns.
 	remaining  int
+	startedAt  time.Time
 	lastChange time.Time
 }
 
@@ -66,6 +72,7 @@ func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) err
 	}
 
 	ticker := time.NewTicker(monCfg.CheckInterval)
+
 	defer ticker.Stop()
 
 	var pollFailures int
@@ -87,12 +94,13 @@ func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) err
 			continue
 		}
 		pollFailures = 0
+		slog.Debug("fetched download queue", "size", len(statuses))
 
 		currentTime := time.Now().Local()
 
 		for _, track := range tracks {
 
-			key := fmt.Sprintf("%s|%s", track.ID, track.File)
+			key := fmt.Sprintf("%s|%s", track.ID, track.CleanTitle)
 
 			if track.Present || track.ID == "" || (progressMap[key] != nil && progressMap[key].Skipped) {
 				continue
@@ -104,43 +112,48 @@ func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) err
 					LastBytesTransferred: 0,
 					Counter:              0,
 					LastUpdated:          currentTime,
+					StartedAt:            currentTime, 
 				}
 			}
-			fileStatus, exists := statuses[track.File]
+			fileStatus, exists := statuses[track.ID]
 			tracker := progressMap[key]
 			if !exists {
 				tracker.Counter++
-
 				if tracker.Counter >= 2 {
 					slog.Info("[monitor] track not found in queue after retries, skipping", "service", monCfg.Service,"track title", track.CleanTitle, "track artist", track.MainArtist)
 					tracker.Skipped = true
 				}
 				continue
-			}
-			monitoredTime := currentTime.Sub(tracker.LastUpdated)
+			} 
+			tracker.Counter = 0
 
-			if fileStatus.BytesRemaining == 0 || fileStatus.PercentComplete == 100 || strings.Contains(fileStatus.State, "Succeeded") {		
+			stallTime := currentTime.Sub(tracker.LastUpdated)
+			monitoredTime := currentTime.Sub(tracker.StartedAt)
+
+			if (fileStatus.BytesRemaining == 0 && fileStatus.BytesTransferred != 0) || fileStatus.PercentComplete == 100 || strings.Contains(fileStatus.State, "Succeeded") {		
+				track.File = fileStatus.Filename
 				track.Present = true
 				slog.Info("[monitor] file downloaded successfully", "service", monCfg.Service, "file", track.File)
-				var path string
-				track.File, path = parsePath(track.File)
+				var filePath string
+				track.File, filePath = parsePath(track.File)
 				if monCfg.MigrateDownload {
-					destDir, err := c.MoveDownload(monCfg.FromDir, monCfg.ToDir, path, track)
+					destDir, err := m.MoveDownload(monCfg.FromDir, monCfg.ToDir, filePath, track)
 					if err != nil {
-						slog.Error("error while moving file", "err", err.Error())
+						slog.Error("error while moving file", "err", err)
 					} else {
 						slog.Info("track moved successfully", "service", monCfg.Service)
 						c.trackAlbum(pendingAlbums, key, &pendingAlbum{
 							track:      track,
-							trackDir:   filepath.Join(monCfg.FromDir, path),
+							trackDir:   filepath.Join(monCfg.FromDir, filePath),
 							destDir:    destDir,
+							startedAt:  currentTime,
 							lastChange: currentTime,
 						}, monCfg)
 					}
 				}
 				delete(progressMap, key)
 				successDownloads += 1
-				if err = m.Cleanup(*track, fileStatus.ID); err != nil {
+				if err = m.Cleanup(*track, fileStatus.QueueID); err != nil {
 					slog.Debug("cleanup failed", logging.RuntimeAttr(err.Error()))
 				}
 				continue
@@ -148,13 +161,35 @@ func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) err
 			} else if fileStatus.BytesTransferred > tracker.LastBytesTransferred {
 				tracker.LastBytesTransferred = fileStatus.BytesTransferred
 				tracker.LastUpdated = currentTime
-				slog.Info("[monitor] progress updated", "service", monCfg.Service, "file", track.File, "bytes transferred", fileStatus.BytesTransferred)
+				slog.Info("[monitor] progress updated", "service", monCfg.Service, "title", track.CleanTitle, "bytes transferred", fileStatus.BytesTransferred)
 				continue
 
-			} else if monitoredTime > monCfg.MonitorDuration || fileStatus.State == "Errored" {
-				slog.Info("[monitor] no download progress for file, skipping", "service", monCfg.Service, "file", track.File, "state", fileStatus.State, "duration", monitoredTime,)
+			} else if fileStatus.State == "Errored" ||
+				stallTime > monCfg.StallDuration ||
+				monitoredTime > monCfg.MaxDuration {
+
+				switch {
+				case fileStatus.State == "Errored":
+					slog.Info("[monitor] download errored",
+						"service", monCfg.Service,
+						"title", track.CleanTitle,
+					)
+				case stallTime > monCfg.StallDuration:
+					slog.Info("[monitor] download stalled",
+						"service", monCfg.Service,
+						"title", track.CleanTitle,
+						"duration", stallTime,
+					)
+				default:
+					slog.Info("[monitor] maximum monitor time exceeded",
+						"service", monCfg.Service,
+						"title", track.CleanTitle,
+						"duration", monitoredTime,
+					)
+				}
+
 				tracker.Skipped = true
-				if err = m.Cleanup(*track, fileStatus.ID); err != nil {
+				if err = m.Cleanup(*track, fileStatus.QueueID); err != nil {
 					slog.Debug("cleanup failed", logging.RuntimeAttr(err.Error()))
 				}
 				continue
@@ -175,10 +210,10 @@ func (c *DownloadClient) MonitorDownloads(tracks []*models.Track, m Monitor) err
 // Checks if all tracks are processed (either downloaded or skipped)
 func tracksProcessed(tracks []*models.Track, progressMap map[string]*DownloadMonitor) bool {
 	for _, track := range tracks {
-		key := fmt.Sprintf("%s|%s", track.ID, track.File)
+		key := fmt.Sprintf("%s|%s", track.ID, track.CleanTitle)
 		tracker, exists := progressMap[key]
 		if !track.Present && exists && !tracker.Skipped {
-			slog.Info("[monitor] track download still in progress", "title", track.CleanTitle, "artist", track.MainArtist, "file", track.File)
+			slog.Info("[monitor] track download still in progress", "title", track.CleanTitle, "artist", track.MainArtist)
 			return false
 		}
 	}
@@ -201,14 +236,16 @@ func (c *DownloadClient) trackAlbum(pending map[string]*pendingAlbum, key string
 func (c *DownloadClient) migrateAlbum(album *pendingAlbum) int {
 	var remaining int
 	for _, m := range c.albumMigrators() {
-		remaining += m.MoveAlbumSiblings(album.trackDir, album.destDir, album.track, c.Cfg.KeepPermissions)
+		remaining += m.MoveAlbumSiblings(album.trackDir, album.destDir, album.track)
 	}
 	return remaining
 }
 
 // migratePendingAlbums revisits every release still waiting on files. A release
 // that stops making progress is abandoned on the same deadline a stalled track
-// is, so the monitor cannot be held open by a peer that has gone away.
+// is, and one that keeps trickling in is abandoned at the same maximum a track
+// is, so the monitor cannot be held open by a peer that has gone away or slowed
+// to a crawl.
 func (c *DownloadClient) migratePendingAlbums(pending map[string]*pendingAlbum, monCfg MonitorConfig, now time.Time) {
 	for key, album := range pending {
 		before := album.remaining
@@ -226,13 +263,14 @@ func (c *DownloadClient) migratePendingAlbums(pending map[string]*pendingAlbum, 
 
 		if remaining < before {
 			album.lastChange = now
-			continue
 		}
 
-		if now.Sub(album.lastChange) > monCfg.MonitorDuration {
+		stalled := now.Sub(album.lastChange) > monCfg.StallDuration
+		overdue := monCfg.MaxDuration > 0 && now.Sub(album.startedAt) > monCfg.MaxDuration
+		if stalled || overdue {
 			delete(pending, key)
 			slog.Warn("[monitor] giving up on the rest of the release", "service", monCfg.Service,
-				"album", album.track.Album, "files left in place", remaining)
+				"album", album.track.Album, "files left in place", remaining, "stalled", stalled)
 		}
 	}
 }
