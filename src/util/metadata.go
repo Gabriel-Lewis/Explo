@@ -42,15 +42,19 @@ func Abs(x int) int {
 	return x
 }
 
+// An empty key means the container has no name for this tag, so there is
+// nothing to write. Without that check a tag map which leaves a field unnamed
+// emitted a nameless "=value" entry for every populated field it could not
+// express.
 func addStringTag(metadata []string, key string, value string) []string {
-	if value != "" {
+	if key != "" && value != "" {
 		metadata = append(metadata, key+"="+value)
 	}
 	return metadata
 }
 
 func addIntTag(metadata []string, key string, value int) []string {
-	if value != 0 {
+	if key != "" && value != 0 {
 		metadata = append(metadata, fmt.Sprintf("%s=%d", key, value))
 	}
 	return metadata
