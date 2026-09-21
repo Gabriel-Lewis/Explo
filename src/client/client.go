@@ -260,7 +260,7 @@ func BestMatch(track *models.Track, results []SearchResult, minScore int) (Searc
 		CleanTitle: util.NormalizeTitle(track.CleanTitle),
 		MainArtist: track.MainArtist,
 		Album: track.Album,
-		File: filepath.Base(track.File),
+		File: baseName(track.File),
 		Duration: track.Duration,
 		MBTrackID: track.MusicBrainzTrackID,
 		MBReleaseTrackID: track.MusicBrainzReleaseTrackID}
@@ -283,6 +283,17 @@ func BestMatch(track *models.Track, results []SearchResult, minScore int) (Searc
 }
 
 const definitiveMatchScore = 1000
+
+// baseName is filepath.Base with the empty path left empty. filepath.Base("")
+// returns ".", which would otherwise compare equal to itself and make two
+// missing filenames look like the same file.
+func baseName(path string) string {
+	if path == "" {
+		return ""
+	}
+	return filepath.Base(path)
+}
+
 func rankResult(track NormalisedTrack, r SearchResult) int {
 	score := 0
 
@@ -307,7 +318,7 @@ func rankResult(track NormalisedTrack, r SearchResult) int {
 		score += 15
 	}
 
-	resultFile := filepath.Base(r.Path)
+	resultFile := baseName(r.Path)
 
 	if track.File != "" && strings.EqualFold(track.File, resultFile) {
 		score += 50
