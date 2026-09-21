@@ -193,7 +193,7 @@ func BuildffmpegMetadata(track models.Track) []string {
 	case "mp3":
 		return buildMetadata(track, id3Tags())
 
-	case "flac", "opus":
+	case "flac", "opus", "ogg":
 		return buildMetadata(track, vorbisTags())
 
 	case "ape", "wv", "mpc":
