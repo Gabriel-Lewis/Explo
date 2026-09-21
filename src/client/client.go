@@ -287,6 +287,18 @@ const definitiveMatchScore = 1000
 // baseName is filepath.Base with the empty path left empty. filepath.Base("")
 // returns ".", which would otherwise compare equal to itself and make two
 // missing filenames look like the same file.
+// sameField and overlaps compare two metadata fields, treating an absent field
+// as no evidence either way. Without that guard EqualFold calls two empty
+// strings equal and ContainsFold finds the empty string inside anything, so a
+// result missing an album or an artist scored as though it agreed.
+func sameField(a, b string) bool {
+	return a != "" && b != "" && strings.EqualFold(a, b)
+}
+
+func overlaps(a, b string) bool {
+	return a != "" && b != "" && (util.ContainsFold(a, b) || util.ContainsFold(b, a))
+}
+
 func baseName(path string) string {
 	if path == "" {
 		return ""
@@ -307,14 +319,14 @@ func rankResult(track NormalisedTrack, r SearchResult) int {
 	} else if len(track.CleanTitle) > 3 && (strings.Contains(resultTitle, track.CleanTitle) || strings.Contains(track.CleanTitle, resultTitle)) {
 		score += 25
 	}
-	if strings.EqualFold(track.Album, r.Album) {
+	if sameField(track.Album, r.Album) {
 		score += 20
-	} else if util.ContainsFold(track.Album, r.Album) || util.ContainsFold(r.Album, track.Album) {
+	} else if overlaps(track.Album, r.Album) {
 		score += 15
 	}
-	if strings.EqualFold(track.MainArtist, r.Artist) || (len(r.Artists) > 0 && strings.EqualFold(r.Artists[0], track.MainArtist)) {
+	if sameField(track.MainArtist, r.Artist) || (len(r.Artists) > 0 && sameField(r.Artists[0], track.MainArtist)) {
 		score += 30
-	} else if (util.ContainsFold(track.MainArtist, r.Artist) || util.ContainsFold(r.Artist, track.MainArtist)) || (len(r.Artists) > 0 && util.ContainsFold(r.Artists[0], track.MainArtist)) {
+	} else if overlaps(track.MainArtist, r.Artist) || (len(r.Artists) > 0 && overlaps(r.Artists[0], track.MainArtist)) {
 		score += 15
 	}
 
