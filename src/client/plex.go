@@ -598,12 +598,16 @@ func (c *Plex) getPlexSong(track *models.Track, metadata []SongMetadata) (Search
 		if md.Type != "track" {
 			continue
 		}
+		// The MBID is only ever compared against the track's own, so with no
+		// track MBID there is nothing this round-trip could decide.
 		var mbid string
-        if c.AdminClient != nil {
-            mbid = c.AdminClient.getPlexMBID(md.RatingKey)
-        } else {
-            mbid = c.getPlexMBID(md.RatingKey)
-        }
+		if track.MusicBrainzTrackID != "" || track.MusicBrainzReleaseTrackID != "" {
+			if c.AdminClient != nil {
+				mbid = c.AdminClient.getPlexMBID(md.RatingKey)
+			} else {
+				mbid = c.getPlexMBID(md.RatingKey)
+			}
+		}
 		var media Media
 		if len(md.Media) > 0 {
 			media = md.Media[0]
