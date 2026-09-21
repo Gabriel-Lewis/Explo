@@ -127,7 +127,7 @@ func (c *Subsonic) AddLibrary() error {
 
 func (c *Subsonic) SearchSongs(tracks []*models.Track) error {
 	for _, track := range tracks {
-		searchQuery := util.CleanSearchTitle(track.CleanTitle)
+		searchQuery := strings.TrimSpace(util.CleanSearchTitle(track.CleanTitle) + " " + track.MainArtist)
 		reqParam := fmt.Sprintf("search3?query=%s&f=json", url.QueryEscape(searchQuery))
 
 		body, err := c.subsonicRequest(reqParam)
