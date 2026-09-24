@@ -100,6 +100,8 @@ type Slskd struct {
 	HttpClient  *util.HttpClient
 	DownloadDir string
 	Cfg         config.Slskd
+	// releases stops tracks from one album each downloading it in album mode.
+	releases *releaseRegistry
 }
 
 type SearchPayload struct {
@@ -109,7 +111,8 @@ type SearchPayload struct {
 func NewSlskd(cfg config.Slskd, downloadDir string) *Slskd {
 	return &Slskd{Cfg: cfg,
 		HttpClient:  util.NewHttp(util.HttpClientConfig{Timeout: cfg.Timeout}),
-		DownloadDir: downloadDir}
+		DownloadDir: downloadDir,
+		releases:    newReleaseRegistry()}
 }
 
 func (c *Slskd) AddHeader() {
@@ -135,10 +138,19 @@ func (c *Slskd) GetConf() (MonitorConfig, error) {
 var errNoRes = errors.New("no results found for query")
 
 func (c *Slskd) QueryTrack(track *models.Track) error {
+	if c.Cfg.AlbumMode {
+		return c.queryAlbum(track)
+	}
+	return c.search(track, false)
+}
+
+// search looks for a release when albumMode is set and for the lone track
+// otherwise, recording the search on the track for GetTrack to read.
+func (c *Slskd) search(track *models.Track, albumMode bool) error {
 
 	wildcardSearch := false
 	trackDetails := fmt.Sprintf("%s - %s", track.CleanTitle, track.Artist)
-	if c.Cfg.AlbumMode {
+	if albumMode {
 		trackDetails = albumSearchTerm(*track)
 	}
 
@@ -159,7 +171,7 @@ func (c *Slskd) QueryTrack(track *models.Track) error {
 		if errors.Is(err, errNoRes) && !wildcardSearch {
 			cleanup()
 			wildcardSearch = true
-			if c.Cfg.AlbumMode && strings.TrimSpace(track.Album) != "" {
+			if albumMode && strings.TrimSpace(track.Album) != "" {
 				trackDetails = fmt.Sprintf("%s - %s", wildcardArtist(track.MainArtist), track.Album)
 			} else {
 				trackDetails = fmt.Sprintf("%s - %s", track.CleanTitle, wildcardArtist(track.Artist))
@@ -184,16 +196,23 @@ func (c *Slskd) QueryTrack(track *models.Track) error {
 }
 
 func (c *Slskd) GetTrack(track *models.Track) error {
+	if c.Cfg.AlbumMode {
+		switch state := c.releases.state(track); {
+		case state != nil && state.role == roleShared:
+			// Already queued as part of another track's release.
+			return nil
+		case state != nil && state.role == roleSingle:
+			return c.getSingle(track)
+		}
+		return c.getAlbum(track)
+	}
+	return c.getSingle(track)
+}
+
+func (c *Slskd) getSingle(track *models.Track) error {
 	results, err := c.searchResults(track.ID)
 	if err != nil {
 		return err
-	}
-	if c.Cfg.AlbumMode {
-		files, err := c.CollectAlbumFiles(*track, results)
-		if err != nil {
-			return err
-		}
-		return c.queueAlbumDownload(files, track)
 	}
 	files, err := c.CollectFiles(*track, results)
 	if err != nil {
@@ -451,8 +470,11 @@ func (c Slskd) deleteDownload(user, ID string) error {
 }
 
 func (c *Slskd) Cleanup(track models.Track, fileID string) error {
-	if err := c.deleteSearch(track.ID); err != nil {
-		slog.Debug("failed to delete search request", logging.RuntimeAttr(err.Error()))
+	// A track shared from another's release has no search of its own.
+	if !c.releases.isSharedID(track.ID) {
+		if err := c.deleteSearch(track.ID); err != nil {
+			slog.Debug("failed to delete search request", logging.RuntimeAttr(err.Error()))
+		}
 	}
 	if err := c.deleteDownload(track.MainArtistID, fileID); err != nil {
 		slog.Debug("failed to delete download", logging.RuntimeAttr(err.Error()))
