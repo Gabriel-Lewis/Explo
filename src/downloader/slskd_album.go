@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"os"
 	"path"
 	"path/filepath"
 	"slices"
@@ -323,11 +321,7 @@ func (c Slskd) siblingStates(username string) (map[string]string, error) {
 // would put a truncated track in the library. Migrated files are dropped from
 // track.AlbumFiles, and so are ones slskd has given up on, which makes repeated
 // calls idempotent and lets the count reach zero.
-//
-// keepPermissions is passed in rather than read from the slskd config because
-// it is a download-wide setting owned by DownloadClient, which is also what
-// calls this.
-func (c Slskd) MoveAlbumSiblings(trackDir, destDir string, track *models.Track, keepPermissions bool) int {
+func (c Slskd) MoveAlbumSiblings(trackDir, destDir string, track *models.Track) int {
 	if !c.Cfg.AlbumMode || len(track.AlbumFiles) == 0 {
 		return 0
 	}
@@ -350,7 +344,7 @@ func (c Slskd) MoveAlbumSiblings(trackDir, destDir string, track *models.Track, 
 
 		switch {
 		case strings.Contains(state, "Succeeded"):
-			if err := copyFile(filepath.Join(trackDir, name), filepath.Join(destDir, name), keepPermissions); err != nil {
+			if err := moveFile(filepath.Join(trackDir, name), filepath.Join(destDir, name), c.Cfg.KeepPermissions); err != nil {
 				// Keep it pending: slskd can report a transfer complete a moment
 				// before the file is readable.
 				slog.Debug("album track not ready to move yet", "file", name, "context", err.Error())
@@ -378,52 +372,4 @@ func (c Slskd) MoveAlbumSiblings(trackDir, destDir string, track *models.Track, 
 	}
 
 	return len(pending)
-}
-
-// copyFile moves one finished album track into the library, mirroring how
-// MoveDownload handles the recommended track: copy, sync, optionally preserve
-// permissions, then drop the original.
-func copyFile(src, dst string, keepPermissions bool) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("couldn't open source file: %s", err.Error())
-	}
-	defer func() {
-		if cerr := in.Close(); cerr != nil {
-			slog.Error(fmt.Sprintf("failed to close source file: %s", cerr.Error()))
-		}
-	}()
-
-	if err = os.MkdirAll(filepath.Dir(dst), os.ModePerm); err != nil {
-		return fmt.Errorf("couldn't make destination directory: %s", err.Error())
-	}
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return fmt.Errorf("couldn't create destination file: %s", err.Error())
-	}
-	defer func() {
-		if cerr := out.Close(); cerr != nil {
-			slog.Error(fmt.Sprintf("failed to close destination file: %s", cerr.Error()))
-		}
-	}()
-
-	if _, err = io.Copy(out, in); err != nil {
-		return fmt.Errorf("copy failed: %s", err.Error())
-	}
-	if err = out.Sync(); err != nil {
-		return fmt.Errorf("sync failed: %s", err.Error())
-	}
-
-	if keepPermissions {
-		info, err := os.Stat(src)
-		if err != nil {
-			return fmt.Errorf("stat error: %s", err.Error())
-		}
-		if err = os.Chmod(dst, info.Mode()); err != nil {
-			return fmt.Errorf("chmod failed: %s", err.Error())
-		}
-	}
-
-	return os.Remove(src)
 }

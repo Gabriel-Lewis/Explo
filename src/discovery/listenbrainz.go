@@ -37,7 +37,7 @@ type Metadata struct {
 	Artist struct {
 		ArtistCreditID int `json:"artist_credit_id"`
 		Artists        []struct {
-			ArtistMbid string `json:"artist_mbid"`
+			MusicBrainzArtistID string `json:"artist_mbid"`
 			BeginYear  int    `json:"begin_year"`
 			EndYear    int    `json:"end_year,omitempty"`
 			JoinPhrase string `json:"join_phrase"`
@@ -121,7 +121,7 @@ type Exploration struct {
 					AdditionalMetadata struct {
 						Artists []struct {
 							ArtistCreditName string `json:"artist_credit_name"`
-							ArtistMbid       string `json:"artist_mbid"`
+							MusicBrainzArtistID       string `json:"artist_mbid"`
 							JoinPhrase       string `json:"join_phrase"`
 						} `json:"artists"`
 						CaaID          int64  `json:"caa_id"`
@@ -390,7 +390,7 @@ func (c *ListenBrainz) getTracks(mbids []string, singleArtist bool) ([]*models.T
 			MusicBrainzTrackID:        mbTrackID,
 			MusicBrainzAlbumID:        rel.CaaReleaseMbid,
 			MusicBrainzReleaseGroupID: rel.ReleaseGroupMbid,
-			MusicBrainzArtistID:       recArtists[0].ArtistMbid,
+			MusicBrainzArtistID:       recArtists[0].MusicBrainzArtistID,
 		})
 	}
 
@@ -439,7 +439,7 @@ func (c *ListenBrainz) enrichTracks(tracks []*models.Track, singleArtist bool) (
 		mainArtist := recording.Artist.Name
 		mainArtistID := ""
 		if len(recording.Artist.Artists) > 0 {
-			mainArtistID = recording.Artist.Artists[0].ArtistMbid
+			mainArtistID = recording.Artist.Artists[0].MusicBrainzArtistID
 		}
 
 		recArtists := recording.Artist.Artists
@@ -596,7 +596,7 @@ func (c *ListenBrainz) enrichTracks(tracks []*models.Track, singleArtist bool) (
 				if len(recArtists) == 0 {
 					return ""
 				}
-				return recArtists[0].ArtistMbid
+				return recArtists[0].MusicBrainzArtistID
 			}(),
 		}
 	}
@@ -673,6 +673,13 @@ func FetchTopRecordings(httpClient *util.HttpClient, user string) ([]*models.Tra
 	return lb.getTopRecordings(user)
 }
 
+// EnrichTracks fetches MusicBrainz metadata for tracks that have recording MBIDs,
+// populating fields like MusicBrainzReleaseGroupID and MusicBrainzArtistID.
+func EnrichTracks(httpClient *util.HttpClient, lbCfg cfg.Listenbrainz, tracks []*models.Track) ([]*models.Track, error) {
+	lb := &ListenBrainz{HttpClient: httpClient, cfg: lbCfg}
+	return lb.enrichTracks(tracks, lbCfg.SingleArtist)
+}
+
 // FetchMostRecentPlaylistByType finds and fetches the most recent LB-generated playlist of the given type for the user.
 func FetchMostRecentPlaylistByType(httpClient *util.HttpClient, user, playlistType string) ([]*models.Track, error) {
 	lb := &ListenBrainz{HttpClient: httpClient, cfg: cfg.Listenbrainz{ImportPlaylist: playlistType}}
@@ -733,9 +740,9 @@ func (c *ListenBrainz) parsePlaylist(identifier string, singleArtist bool) (stri
 			recordingMBID = parts[len(parts)-1]
 		}
 
-		artistMBID := ""
+		MusicBrainzArtistID := ""
 		if len(trackMeta.Artists) > 0 {
-			artistMBID = trackMeta.Artists[0].ArtistMbid
+			MusicBrainzArtistID = trackMeta.Artists[0].MusicBrainzArtistID
 		}
 
 		tracks = append(tracks, &models.Track{
@@ -747,7 +754,7 @@ func (c *ListenBrainz) parsePlaylist(identifier string, singleArtist bool) (stri
 			Duration:            track.Duration,
 			CoverURL:            coverURL,
 			MusicBrainzTrackID:  recordingMBID,
-			MusicBrainzArtistID: artistMBID,
+			MusicBrainzArtistID: MusicBrainzArtistID,
 			MusicBrainzAlbumID:  trackMeta.CaaReleaseMbid,
 		})
 	}

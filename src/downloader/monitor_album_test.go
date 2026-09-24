@@ -29,7 +29,13 @@ func (f *fakeMigrator) GetDownloadStatus([]*models.Track) (map[string]FileStatus
 func (f *fakeMigrator) GetConf() (MonitorConfig, error)  { return MonitorConfig{}, nil }
 func (f *fakeMigrator) Cleanup(models.Track, string) error { return nil }
 
-func (f *fakeMigrator) MoveAlbumSiblings(trackDir, destDir string, track *models.Track, keepPermissions bool) int {
+// MoveDownload moves the recommended track for real, as a downloader would, so
+// the monitor has a landing directory to hand the rest of the release.
+func (f *fakeMigrator) MoveDownload(srcDir, destDir, trackPath string, track *models.Track) (string, error) {
+	return moveTrack(filepath.Join(srcDir, trackPath, track.File), destDir, track, "", false)
+}
+
+func (f *fakeMigrator) MoveAlbumSiblings(trackDir, destDir string, track *models.Track) int {
 	f.calls++
 	f.lastSource, f.lastDest = trackDir, destDir
 
@@ -56,13 +62,14 @@ func TestMigratePendingAlbums_RetriesUntilComplete(t *testing.T) {
 	client := newClient(t, migrator)
 
 	trackDir := t.TempDir()
-	monCfg := MonitorConfig{MonitorDuration: time.Hour}
+	monCfg := MonitorConfig{StallDuration: time.Hour, MaxDuration: 24 * time.Hour}
 
 	pending := map[string]*pendingAlbum{}
 	client.trackAlbum(pending, "key", &pendingAlbum{
 		track:      &models.Track{Album: "When We All Fall Asleep"},
 		trackDir:   trackDir,
 		destDir:    t.TempDir(),
+		startedAt:  time.Now(),
 		lastChange: time.Now(),
 	}, monCfg)
 
@@ -88,12 +95,13 @@ func TestMigratePendingAlbums_ProgressExtendsTheDeadline(t *testing.T) {
 	client := newClient(t, migrator)
 
 	start := time.Now()
-	monCfg := MonitorConfig{MonitorDuration: time.Minute}
+	monCfg := MonitorConfig{StallDuration: time.Minute, MaxDuration: 24 * time.Hour}
 
 	album := &pendingAlbum{
 		track:      &models.Track{Album: "When We All Fall Asleep"},
 		trackDir:   t.TempDir(),
 		destDir:    t.TempDir(),
+		startedAt:  start,
 		lastChange: start,
 	}
 	pending := map[string]*pendingAlbum{}
@@ -121,13 +129,14 @@ func TestMigratePendingAlbums_GivesUpWhenStalled(t *testing.T) {
 		t.Fatalf("seeding stalled file: %v", err)
 	}
 
-	monCfg := MonitorConfig{MonitorDuration: time.Minute}
+	monCfg := MonitorConfig{StallDuration: time.Minute, MaxDuration: 24 * time.Hour}
 
 	pending := map[string]*pendingAlbum{}
 	client.trackAlbum(pending, "key", &pendingAlbum{
 		track:      &models.Track{Album: "When We All Fall Asleep"},
 		trackDir:   trackDir,
 		destDir:    t.TempDir(),
+		startedAt:  start,
 		lastChange: start,
 	}, monCfg)
 
@@ -142,6 +151,36 @@ func TestMigratePendingAlbums_GivesUpWhenStalled(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(trackDir, "half.flac")); err != nil {
 		t.Errorf("abandoned files should be left in place, not deleted: %v", err)
+	}
+}
+
+// A release that keeps trickling in resets the stall clock every pass, so only
+// the overall cap stops it from holding the monitor open indefinitely.
+func TestMigratePendingAlbums_GivesUpPastTheMaxDuration(t *testing.T) {
+	migrator := &fakeMigrator{remaining: 100, perPass: 1}
+	client := newClient(t, migrator)
+
+	start := time.Now()
+	monCfg := MonitorConfig{StallDuration: time.Hour, MaxDuration: time.Hour}
+
+	pending := map[string]*pendingAlbum{}
+	client.trackAlbum(pending, "key", &pendingAlbum{
+		track:      &models.Track{Album: "When We All Fall Asleep"},
+		trackDir:   t.TempDir(),
+		destDir:    t.TempDir(),
+		startedAt:  start,
+		lastChange: start,
+	}, monCfg)
+
+	client.migratePendingAlbums(pending, monCfg, start.Add(30*time.Minute))
+	if len(pending) != 1 {
+		t.Fatal("release abandoned before the max duration")
+	}
+
+	// Still making progress, but past the cap.
+	client.migratePendingAlbums(pending, monCfg, start.Add(2*time.Hour))
+	if len(pending) != 0 {
+		t.Error("a release still trickling in was never abandoned at the max duration")
 	}
 }
 
@@ -173,7 +212,7 @@ func (m *monitorStub) GetConf() (MonitorConfig, error) { return m.cfg, nil }
 func (m *monitorStub) GetDownloadStatus(tracks []*models.Track) (map[string]FileStatus, error) {
 	statuses := make(map[string]FileStatus, len(tracks))
 	for _, track := range tracks {
-		statuses[track.File] = FileStatus{ID: "1", State: "Completed, Succeeded", PercentComplete: 100}
+		statuses[track.ID] = FileStatus{ID: "1", Filename: track.File, State: "Completed, Succeeded", PercentComplete: 100}
 	}
 	return statuses, nil
 }
@@ -197,7 +236,8 @@ func TestMonitorDownloads_WaitsForTheRestOfTheRelease(t *testing.T) {
 		fakeMigrator: fakeMigrator{remaining: 3, perPass: 1},
 		cfg: MonitorConfig{
 			CheckInterval:   time.Millisecond,
-			MonitorDuration: time.Hour,
+			StallDuration:   time.Hour,
+			MaxDuration:     24 * time.Hour,
 			MigrateDownload: true,
 			FromDir:         fromDir,
 			ToDir:           toDir,

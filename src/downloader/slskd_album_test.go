@@ -301,7 +301,7 @@ func TestMoveAlbumSiblings_SkipsUnfinishedTransfers(t *testing.T) {
 	track.MainArtistID = "peer1" // queueAlbumDownload stashes the peer here
 	track.AlbumFiles = []string{done, pending}
 
-	client.MoveAlbumSiblings(srcDir, destDir, &track, false)
+	client.MoveAlbumSiblings(srcDir, destDir, &track)
 
 	if _, err := os.Stat(filepath.Join(destDir, "01 Bury A Friend.flac")); err != nil {
 		t.Errorf("finished sibling was not migrated: %v", err)
@@ -335,7 +335,7 @@ func TestMoveAlbumSiblings_NoopWhenAlbumModeIsOff(t *testing.T) {
 	track.MainArtistID = "peer1"
 	track.AlbumFiles = []string{`@@x\dir\01 Bury A Friend.flac`}
 
-	client.MoveAlbumSiblings(srcDir, destDir, &track, false)
+	client.MoveAlbumSiblings(srcDir, destDir, &track)
 
 	if _, err := os.Stat(filepath.Join(srcDir, "01 Bury A Friend.flac")); err != nil {
 		t.Errorf("sibling was migrated with album mode off: %v", err)
@@ -343,7 +343,7 @@ func TestMoveAlbumSiblings_NoopWhenAlbumModeIsOff(t *testing.T) {
 }
 
 // *Slskd must satisfy the optional interface DownloadClient looks for, or the
-// hook in MoveDownload silently never fires.
+// monitor's release migration silently never fires.
 func TestSlskdImplementsAlbumMigrator(t *testing.T) {
 	var _ albumMigrator = &Slskd{}
 }
@@ -383,7 +383,7 @@ func TestMoveAlbumSiblings_PicksUpSiblingsThatFinishLater(t *testing.T) {
 	track.MainArtistID = "peer1"
 	track.AlbumFiles = []string{early, late}
 
-	if remaining := client.MoveAlbumSiblings(srcDir, destDir, &track, false); remaining != 1 {
+	if remaining := client.MoveAlbumSiblings(srcDir, destDir, &track); remaining != 1 {
 		t.Fatalf("first pass left %d files pending, want 1", remaining)
 	}
 	if _, err := os.Stat(filepath.Join(destDir, "03 Xanny.flac")); !os.IsNotExist(err) {
@@ -392,7 +392,7 @@ func TestMoveAlbumSiblings_PicksUpSiblingsThatFinishLater(t *testing.T) {
 
 	lateState = "Completed, Succeeded"
 
-	if remaining := client.MoveAlbumSiblings(srcDir, destDir, &track, false); remaining != 0 {
+	if remaining := client.MoveAlbumSiblings(srcDir, destDir, &track); remaining != 0 {
 		t.Errorf("second pass left %d files pending, want 0", remaining)
 	}
 	if _, err := os.Stat(filepath.Join(destDir, "03 Xanny.flac")); err != nil {
@@ -422,7 +422,7 @@ func TestMoveAlbumSiblings_ForgetsMigratedFiles(t *testing.T) {
 	track.MainArtistID = "peer1"
 	track.AlbumFiles = []string{done}
 
-	client.MoveAlbumSiblings(srcDir, t.TempDir(), &track, false)
+	client.MoveAlbumSiblings(srcDir, t.TempDir(), &track)
 
 	if len(track.AlbumFiles) != 0 {
 		t.Errorf("AlbumFiles still holds %v after migration", track.AlbumFiles)
@@ -446,7 +446,7 @@ func TestMoveAlbumSiblings_DropsFailedSiblings(t *testing.T) {
 	track.MainArtistID = "peer1"
 	track.AlbumFiles = []string{failed}
 
-	if remaining := client.MoveAlbumSiblings(t.TempDir(), t.TempDir(), &track, false); remaining != 0 {
+	if remaining := client.MoveAlbumSiblings(t.TempDir(), t.TempDir(), &track); remaining != 0 {
 		t.Errorf("a failed sibling left %d files pending, want 0", remaining)
 	}
 }
