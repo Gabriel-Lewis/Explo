@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"errors"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -153,6 +154,8 @@ type Plex struct {
 	HttpClient  *util.HttpClient
 	AdminClient *Plex
 	Cfg         config.ClientConfig
+	// userSwitcher, when set, replaces AdminClient.SwitchUser (test seam).
+	userSwitcher func(username string) (*Plex, error)
 }
 
 func NewPlex(cfg config.ClientConfig, httpClient *util.HttpClient) *Plex {
@@ -567,6 +570,30 @@ func (c *Plex) CreatePlaylist(tracks []*models.Track) error {
 		userClient = c
 	}
 
+	id, err := c.createPlaylistAs(userClient, userClient.Cfg.PlaylistName, tracks)
+	if err != nil {
+		return err
+	}
+	c.Cfg.PlaylistID = id
+
+	return nil
+}
+
+// createPlaylistAs creates a playlist titled title as userClient, adds tracks
+// with userClient's token, and returns the new rating key.
+func (c *Plex) createPlaylistAs(userClient *Plex, title string, tracks []*models.Track) (string, error) {
+	if _, err := c.postPlaylistAs(userClient, title); err != nil {
+		return "", err
+	}
+
+	userClient.addtoPlaylist(tracks)
+
+	return userClient.Cfg.PlaylistID, nil
+}
+
+// postPlaylistAs creates an empty playlist titled title as userClient, records
+// its rating key in userClient.Cfg.PlaylistID and returns it.
+func (c *Plex) postPlaylistAs(userClient *Plex, title string) (string, error) {
 	metadataURI := fmt.Sprintf(
 		"server://%s/com.plexapp.plugins.library/%s",
 		userClient.machineID,
@@ -575,7 +602,7 @@ func (c *Plex) CreatePlaylist(tracks []*models.Track) error {
 
 	params := fmt.Sprintf(
 		"/playlists?title=%s&type=audio&smart=0&uri=%s",
-		url.QueryEscape(userClient.Cfg.PlaylistName),
+		url.QueryEscape(title),
 		url.QueryEscape(metadataURI),
 	)
 
@@ -588,26 +615,23 @@ func (c *Plex) CreatePlaylist(tracks []*models.Track) error {
 		headers,
 	)
 	if err != nil {
-		return fmt.Errorf("playlist create failed: %w", err)
+		return "", fmt.Errorf("playlist create failed: %w", err)
 	}
 
 	var playlist PlexPlaylist
 	if err := util.ParseResp(body, &playlist); err != nil {
-		return fmt.Errorf("failed parsing playlist response: %w", err)
+		return "", fmt.Errorf("failed parsing playlist response: %w", err)
 	}
 
 	if len(playlist.MediaContainer.Metadata) == 0 {
-		return fmt.Errorf("playlist created but no metadata returned")
+		return "", fmt.Errorf("playlist created but no metadata returned")
 	}
 
 	userClient.Cfg.PlaylistID = playlist.MediaContainer.Metadata[0].RatingKey
 
-	userClient.addtoPlaylist(tracks)
-
-	c.Cfg.PlaylistID = userClient.Cfg.PlaylistID
-
-	return nil
+	return userClient.Cfg.PlaylistID, nil
 }
+
 func (c *Plex) UpdatePlaylist() error {
 	params := fmt.Sprintf("/playlists/%s?summary=%s", c.Cfg.PlaylistID, url.QueryEscape(c.Cfg.PlaylistDescr))
 
@@ -740,13 +764,119 @@ func (c *Plex) getPlexMBID(ratingKey string) string {
 }
 
 func (c *Plex) addtoPlaylist(tracks []*models.Track) {
+	c.addTracksCounted(tracks)
+}
+
+// addTracksCounted adds tracks to c.Cfg.PlaylistID, logging failures, and
+// returns how many were added.
+func (c *Plex) addTracksCounted(tracks []*models.Track) int {
+	added := 0
 	for _, track := range tracks {
 		if track.ID != "" {
 			params := fmt.Sprintf("/playlists/%s/items?uri=server://%s/com.plexapp.plugins.library%s", c.Cfg.PlaylistID, c.machineID, track.ID)
 
 			if _, err := c.HttpClient.MakeRequest("PUT", c.Cfg.URL+params, nil, c.Cfg.Creds.Headers); err != nil {
 				slog.Warn("failed to add to playlist", "title", track.Title, "err", err)
+				continue
 			}
+			added++
 		}
 	}
+	return added
+}
+
+// switchTo returns a client scoped to username's Plex account.
+func (c *Plex) switchTo(username string) (*Plex, error) {
+	if c.userSwitcher != nil {
+		return c.userSwitcher(username)
+	}
+	c.AdminClient.machineID = c.machineID
+	return c.AdminClient.SwitchUser(username)
+}
+
+// SharePlaylist puts a copy of the playlist, titled after its owner, into each
+// user's account, replacing the user's previous copy (exact title match
+// only), which is deleted only after the new copy has at least one track. Every request
+// for a user is sent with that user's own token. A failure for one user is
+// logged and returned but does not stop the others.
+func (c *Plex) SharePlaylist(tracks []*models.Track, owner string, users []string) error {
+	if strings.TrimSpace(owner) == "" {
+		// Without an owner the copy title is the bare playlist name, which is
+		// the recipient's own Explo playlist; replacing it would delete it.
+		slog.Warn("playlist sharing needs PLAYLIST_OWNER_NAME; skipping")
+		return nil
+	}
+	if c.AdminClient == nil && c.userSwitcher == nil {
+		slog.Warn("plex playlist sharing needs an admin client; skipping")
+		return nil
+	}
+
+	var present []*models.Track
+	for _, t := range tracks {
+		if t.ID != "" {
+			present = append(present, t)
+		}
+	}
+	if len(present) == 0 {
+		slog.Info("no matched tracks to share")
+		return nil
+	}
+
+	title := ShareTitle(owner, c.Cfg.PlaylistName)
+	var errs []error
+	for _, user := range users {
+		if err := c.shareWith(user, title, present); err != nil {
+			slog.Warn("failed to share playlist", "user", user, "err", err)
+			errs = append(errs, fmt.Errorf("share with %s: %w", user, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (c *Plex) shareWith(user, title string, tracks []*models.Track) error {
+	recipient, err := c.switchTo(user)
+	if err != nil {
+		return fmt.Errorf("switch user: %w", err)
+	}
+	headers := recipient.cloneHeaders()
+
+	var oldKey string
+	body, err := recipient.HttpClient.MakeRequest("GET", recipient.Cfg.URL+"/playlists", nil, headers)
+	if err != nil {
+		return fmt.Errorf("list playlists: %w", err)
+	}
+	var playlists PlexPlaylist
+	if err := util.ParseResp(body, &playlists); err != nil {
+		return fmt.Errorf("parse playlists: %w", err)
+	}
+	for _, p := range playlists.MediaContainer.Metadata {
+		if p.Title == title {
+			oldKey = p.RatingKey
+			break
+		}
+	}
+
+	newKey, err := c.postPlaylistAs(recipient, title)
+	if err != nil {
+		return err
+	}
+	if newKey == "" {
+		return fmt.Errorf("playlist create returned no rating key")
+	}
+	if recipient.addTracksCounted(tracks) == 0 {
+		return fmt.Errorf("no tracks added to new copy %s; old copy kept", newKey)
+	}
+
+	summary := fmt.Sprintf("/playlists/%s?summary=%s", newKey, url.QueryEscape(c.Cfg.PlaylistDescr))
+	if _, err := recipient.HttpClient.MakeRequest("PUT", recipient.Cfg.URL+summary, nil, headers); err != nil {
+		slog.Warn("failed to set shared playlist summary", "user", user, "err", err)
+	}
+
+	if oldKey == "" || oldKey == newKey {
+		return nil
+	}
+	if _, err := recipient.HttpClient.MakeRequest("DELETE", recipient.Cfg.URL+"/playlists/"+oldKey, nil, headers); err != nil {
+		return fmt.Errorf("delete old copy %s: %w", oldKey, err)
+	}
+	return nil
 }

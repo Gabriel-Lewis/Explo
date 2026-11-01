@@ -326,3 +326,23 @@ func rankResult(track NormalisedTrack, r SearchResult) int {
 }
 	return score
 }
+
+// PlaylistSharer is an optional capability for clients that can put a copy of
+// a playlist into other users' accounts.
+type PlaylistSharer interface {
+	SharePlaylist(tracks []*models.Track, owner string, users []string) error
+}
+
+// SharePlaylist copies the playlist to every user on Cfg.ShareWith. It is a
+// no-op when the list is empty or the backend cannot share.
+func (c *Client) SharePlaylist(tracks []*models.Track) error {
+	if len(c.Cfg.ShareWith) == 0 {
+		return nil
+	}
+	sharer, ok := c.API.(PlaylistSharer)
+	if !ok {
+		slog.Warn("playlist sharing is not supported by this system; skipping", "system", c.System)
+		return nil
+	}
+	return sharer.SharePlaylist(tracks, c.Cfg.OwnerName, c.Cfg.ShareWith)
+}
